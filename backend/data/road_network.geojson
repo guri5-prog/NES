@@ -1,0 +1,76 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "NH-6 Primary",
+        "risk": 82,
+        "route_type": "primary"
+        },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [91.8933, 25.5788],
+          [91.855, 25.535],
+          [91.815, 25.485],
+          [91.775, 25.430],
+          [91.735, 25.365],
+          [91.7033, 25.267]
+        ]
+      }
+    },
+
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Mawphlang Alternate",
+        "risk": 25,
+        "route_type": "alternate"
+        },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [91.8933, 25.5788],
+          [91.850, 25.505],
+          [91.805, 25.450],
+          [91.760, 25.400],
+          [91.735, 25.350],
+          [91.7033, 25.267]
+        ]
+      }
+    },
+
+    {
+      "type": "Feature",
+            "properties": {
+        "name": "Mawphlang Connector",
+        "risk": 30,
+        "route_type": "alternate"
+        },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [91.805, 25.450],
+          [91.760, 25.400]
+        ]
+      }
+    },
+
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Highland Bypass",
+        "risk": 18,
+        "route_type": "alternate"
+        },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [91.760, 25.400],
+          [91.735, 25.350]
+        ]
+      }
+    }
+  ]
+}

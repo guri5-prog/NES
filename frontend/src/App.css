@@ -1,0 +1,365 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family:
+    Inter,
+    Arial,
+    sans-serif;
+
+  background: #f3f4f6;
+}
+
+.app {
+  width: 100%;
+  min-height: 100vh;
+}
+
+
+/* =========================
+   HEADER
+========================= */
+
+.header {
+  height: 72px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  padding: 0 24px;
+
+  background: #111827;
+  color: white;
+}
+
+.header h1 {
+  margin: 0;
+
+  font-size: 23px;
+  font-weight: 700;
+}
+
+.header p {
+  margin: 3px 0 0;
+
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.system-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+
+  border-radius: 50%;
+}
+
+.status-dot.online {
+  background: #22c55e;
+}
+
+.status-dot.offline {
+  background: #ef4444;
+}
+
+
+/* =========================
+   DASHBOARD
+========================= */
+
+.dashboard {
+  display: grid;
+
+  grid-template-columns:
+    minmax(0, 1fr)
+    350px;
+
+  height: calc(100vh - 72px);
+}
+
+
+/* =========================
+   MAP
+========================= */
+
+.map-section {
+  min-width: 0;
+}
+
+.map-container {
+  width: 100%;
+  height: 100%;
+}
+
+
+/* =========================
+   SIDEBAR
+========================= */
+
+.sidebar {
+  padding: 16px;
+
+  overflow-y: auto;
+
+  background: #f9fafb;
+}
+
+.panel {
+  padding: 16px;
+
+  margin-bottom: 14px;
+
+  background: white;
+
+  border-radius: 12px;
+
+  box-shadow:
+    0 2px 10px
+    rgba(0, 0, 0, 0.06);
+}
+
+.panel-title {
+  margin-bottom: 14px;
+
+  font-size: 16px;
+  font-weight: 700;
+}
+
+
+/* =========================
+   RISK
+========================= */
+
+.risk-card {
+  padding: 18px;
+
+  border-radius: 10px;
+
+  text-align: center;
+}
+
+.risk-card.high {
+  background: #fee2e2;
+}
+
+.risk-card.medium {
+  background: #fef3c7;
+}
+
+.risk-card.low {
+  background: #dcfce7;
+}
+
+.risk-label {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.risk-score {
+  margin: 5px 0;
+
+  font-size: 42px;
+  font-weight: 800;
+}
+
+.risk-level {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+
+/* =========================
+   WEATHER
+========================= */
+
+.weather-section {
+  margin-top: 18px;
+}
+
+.weather-section h3 {
+  margin-bottom: 8px;
+
+  font-size: 14px;
+}
+
+.weather-section p {
+  margin: 5px 0;
+
+  font-size: 13px;
+}
+
+
+/* =========================
+   RECOMMENDATION
+========================= */
+
+.recommendation {
+  margin-top: 18px;
+
+  padding: 14px;
+
+  border-radius: 10px;
+
+  background: #eff6ff;
+}
+
+.recommendation h3 {
+  margin-top: 0;
+
+  font-size: 14px;
+}
+
+.recommendation p {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.route-stats {
+  display: flex;
+
+  justify-content: space-between;
+
+  font-size: 12px;
+  font-weight: 700;
+}
+
+
+/* =========================
+   INCIDENT FORM
+========================= */
+
+.incident-form {
+  display: flex;
+
+  flex-direction: column;
+
+  gap: 11px;
+}
+
+.incident-form label {
+  display: flex;
+
+  flex-direction: column;
+
+  gap: 5px;
+
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.incident-form select,
+.incident-form textarea {
+  width: 100%;
+
+  padding: 9px;
+
+  border: 1px solid #d1d5db;
+
+  border-radius: 7px;
+
+  font: inherit;
+}
+
+.incident-form textarea {
+  min-height: 75px;
+
+  resize: vertical;
+}
+
+.incident-form button {
+  padding: 10px;
+
+  border: none;
+
+  border-radius: 7px;
+
+  background: #111827;
+
+  color: white;
+
+  font-weight: 700;
+
+  cursor: pointer;
+}
+
+.incident-form button:hover {
+  background: #374151;
+}
+
+
+/* =========================
+   INCIDENTS
+========================= */
+
+.incident {
+  margin-bottom: 9px;
+
+  padding: 10px;
+
+  border-left:
+    4px solid #ef4444;
+
+  background: #f9fafb;
+
+  border-radius: 4px;
+}
+
+.incident strong {
+  display: block;
+
+  font-size: 12px;
+}
+
+.incident span {
+  font-size: 10px;
+
+  font-weight: 800;
+}
+
+.incident p {
+  margin: 5px 0 0;
+
+  font-size: 11px;
+
+  color: #6b7280;
+}
+
+.empty {
+  color: #6b7280;
+
+  font-size: 13px;
+}
+
+
+/* =========================
+   RESPONSIVE
+========================= */
+
+@media (max-width: 900px) {
+
+  .dashboard {
+    grid-template-columns: 1fr;
+
+    height: auto;
+  }
+
+  .map-container {
+    height: 500px;
+  }
+
+  .sidebar {
+    height: auto;
+  }
+
+}
