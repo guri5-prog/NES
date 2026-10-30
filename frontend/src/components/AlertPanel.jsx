@@ -1,175 +1,22 @@
-function AlertPanel({
-  risk,
-  weather,
-  routes,
-}) {
-
-  if (!risk || !routes) {
-
-    return (
-      <div className="panel">
-        Loading AI analysis...
-      </div>
-    );
-
-  }
-
-
-  const prediction =
-    risk.prediction;
-
-
-  const primaryRisk =
-    routes.normal?.risk_score ?? 0;
-
-
-  const saferRisk =
-    routes.safer?.risk_score ?? 0;
-
-
-  const routeIsRisky =
-    primaryRisk >= 70;
-
-
-  let routeStatus = "LOW";
-
-  if (primaryRisk >= 70) {
-    routeStatus = "HIGH";
-  } else if (primaryRisk >= 40) {
-    routeStatus = "MEDIUM";
-  }
-
-
-  return (
-
-    <div className="panel">
-
-      <div className="panel-title">
-        AI Risk Assessment
-      </div>
-
-
-      {/* AI ENVIRONMENT RISK */}
-
-      <div
-        className={
-          `risk-card ${
-            prediction.level.toLowerCase()
-          }`
-        }
-      >
-
-        <div className="risk-label">
-          Environmental Risk
-        </div>
-
-        <div className="risk-score">
-          {prediction.score}
-        </div>
-
-        <div className="risk-level">
-          {prediction.level}
-        </div>
-
-      </div>
-
-
-      {/* PRIMARY ROUTE */}
-
-      <div className="weather-section">
-
-        <h3>
-          Primary Route Risk
-        </h3>
-
-        <p>
-          Score:{" "}
-          <strong>
-            {primaryRisk}
-          </strong>
-        </p>
-
-        <p>
-          Status:{" "}
-          <strong>
-            {routeStatus}
-          </strong>
-        </p>
-
-      </div>
-
-
-      {/* WEATHER */}
-
-      {weather && (
-
-        <div className="weather-section">
-
-          <h3>
-            Current Conditions
-          </h3>
-
-          <p>
-            {weather.condition}
-          </p>
-
-          <p>
-            Rainfall:{" "}
-            {weather.rainfall_mm} mm
-          </p>
-
-          <p>
-            Visibility:{" "}
-            {weather.visibility_km} km
-          </p>
-
-        </div>
-
-      )}
-
-
-      {/* AI ROUTE RECOMMENDATION */}
-
-      {routeIsRisky && (
-
-        <div className="recommendation">
-
-          <h3>
-            Safer Route Recommended
-          </h3>
-
-          <p>
-
-            The primary route has a
-            high predicted risk.
-
-            The routing engine identified
-            an alternate path with
-            significantly lower risk.
-
-          </p>
-
-
-          <div className="route-stats">
-
-            <span>
-              Risk: {saferRisk}
-            </span>
-
-            <span>
-              {routes.safer.distance_km} km
-            </span>
-
-          </div>
-
-        </div>
-
-      )}
-
-    </div>
-
-  );
+function levelFor(score) {
+  if (!Number.isFinite(Number(score))) return "unknown";
+  return Number(score) >= 70 ? "high" : Number(score) >= 40 ? "medium" : "low";
 }
 
-
-export default AlertPanel;
+export default function AlertPanel({ risk, weather, routes }) {
+  const prediction = risk?.prediction;
+  const score = Number(prediction?.score);
+  const level = String(prediction?.level || levelFor(score)).toLowerCase();
+  const primary = routes?.normal;
+  const safer = routes?.safer;
+  const recommendation = routes?.recommendation;
+  return (
+    <section className="panel-card risk-panel">
+      <div className="card-heading"><div><p className="eyebrow">CONDITIONS</p><h2>Risk assessment</h2></div><span className={`risk-chip ${level}`}>{level === "unknown" ? "Pending" : `${level} risk`}</span></div>
+      <div className={`risk-summary ${level}`}><div><span>Environmental score</span><strong>{Number.isFinite(score) ? score.toFixed(0) : "—"}<small> / 100</small></strong></div><div className="risk-meter"><span style={{ width: `${Number.isFinite(score) ? Math.max(0, Math.min(score, 100)) : 0}%` }} /></div><small>{prediction?.level ? `${prediction.level} conditions` : "Waiting for risk data"}</small></div>
+      <div className="route-risk-grid"><div><span>Primary route</span><strong>{primary?.risk_score ?? "—"}<small> risk</small></strong><small>{primary?.distance_km ?? "—"} km</small></div><div><span>Safer route</span><strong>{safer?.risk_score ?? "—"}<small> risk</small></strong><small>{safer?.distance_km ?? "—"} km</small></div></div>
+      {recommendation && <div className={`recommendation ${recommendation.recommended ? "recommended" : ""}`}><span className="recommendation-icon">{recommendation.recommended ? "!" : "✓"}</span><p><strong>{recommendation.recommended ? "Alternate route recommended" : "Primary route available"}</strong><small>{recommendation.reason}</small></p></div>}
+      <div className="weather-block"><div className="weather-title"><span>Current conditions</span><span className="weather-condition">{weather?.condition || "Weather unavailable"}</span></div><div className="weather-values"><div><strong>{weather?.rainfall_mm ?? "—"}<small> mm</small></strong><span>Rainfall</span></div><div><strong>{weather?.visibility_km ?? "—"}<small> km</small></strong><span>Visibility</span></div><div><strong>{weather?.temperature_c ?? "—"}<small>°</small></strong><span>Temperature</span></div></div></div>
+    </section>
+  );
+}

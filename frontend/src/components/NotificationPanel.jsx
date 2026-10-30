@@ -1,157 +1,19 @@
 import { useMemo, useState } from "react";
 
-function NotificationPanel({
-  risk,
-  weather,
-  routes,
-  incidents,
-}) {
-  const [readNotifications, setReadNotifications] =
-    useState(new Set());
-
-  const notifications = useMemo(() => {
-    const items = [];
-
-    // High-risk route alert
-    const routeRisk = routes?.normal?.risk_score ?? 0;
-
-    if (routeRisk >= 70) {
-      items.push({
-        id: "high-risk-route",
-        type: "HIGH_RISK",
-        title: "High-Risk Road Alert",
-        message:
-          "The primary route has a high predicted risk.",
-        severity: "HIGH",
-      });
-    }
-
-    // AI environmental risk alert
-    const riskLevel = risk?.prediction?.level;
-
-    if (
-      typeof riskLevel === "string" &&
-      riskLevel.toUpperCase() === "HIGH"
-    ) {
-      items.push({
-        id: "environmental-risk",
-        type: "ENVIRONMENTAL",
-        title: "Environmental Risk Alert",
-        message:
-          "The AI system has detected high environmental risk.",
-        severity: "HIGH",
-      });
-    }
-
-    // Road incident alerts
-    (Array.isArray(incidents) ? incidents : []).forEach(
-      (incident) => {
-        const incidentType = String(
-          incident.type ?? "INCIDENT"
-        ).toUpperCase();
-
-        const isBlockedRoad = [
-          "ROAD_BLOCK",
-          "BLOCKED_ROAD",
-          "ROAD_BLOCKED",
-        ].includes(incidentType);
-
-        items.push({
-          id: `incident-${incident.id}`,
-          type: isBlockedRoad
-            ? "BLOCKED_ROAD"
-            : "INCIDENT",
-          title: isBlockedRoad
-            ? "Blocked Road Alert"
-            : "Incident Report",
-          message:
-            incident.description ||
-            `${incidentType.replaceAll("_", " ")} reported.`,
-          severity: incident.severity ?? "UNKNOWN",
-        });
-      }
-    );
-
-    return items;
-  }, [risk, weather, routes, incidents]);
-
-  const unreadCount = notifications.filter(
-    (notification) =>
-      !readNotifications.has(notification.id)
-  ).length;
-
-  function markAsRead(id) {
-    setReadNotifications((previous) => {
-      const updated = new Set(previous);
-      updated.add(id);
-      return updated;
-    });
-  }
-
-  function markAllAsRead() {
-    setReadNotifications(
-      new Set(notifications.map((item) => item.id))
-    );
-  }
-
-  return (
-    <div className="panel">
-      <div className="panel-title">
-        Notifications ({unreadCount} unread)
+export default function NotificationPanel({ incidents = [] }) {
+  const [read, setRead] = useState(() => new Set());
+  const items = useMemo(() => [...incidents].sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0)), [incidents]);
+  function markRead(id) { setRead((current) => new Set([...current, id])); }
+  if (!items.length) return <p className="empty-state">No incident reports yet. New reports will appear here.</p>;
+  return <div className="notification-list">{items.slice(0, 8).map((incident, index) => {
+    const id = incident.id ?? index;
+    const severity = String(incident.severity || "unknown").toLowerCase();
+    return <article className={`incident-row ${read.has(id) ? "is-read" : ""}`} key={id}>
+      <span className={`incident-severity ${severity}`} />
+      <div className="incident-row-copy"><div className="incident-row-title"><strong>{String(incident.type || "Incident").replaceAll("_", " ")}</strong><span className={`severity-label ${severity}`}>{incident.severity || "Unknown"}</span></div>
+        <p>{incident.description || "No description provided."}</p><small>{incident.timestamp ? new Date(incident.timestamp).toLocaleString() : "Time unavailable"}{incident.source ? ` · ${incident.source.replaceAll("_", " ")}` : ""}</small>
       </div>
-
-      {notifications.length > 0 && (
-        <button
-          type="button"
-          onClick={markAllAsRead}
-        >
-          Mark All as Read
-        </button>
-      )}
-
-      {notifications.length === 0 ? (
-        <p className="empty">
-          No current alerts.
-        </p>
-      ) : (
-        notifications.map((notification) => {
-          const isRead = readNotifications.has(
-            notification.id
-          );
-
-          return (
-            <div
-              key={notification.id}
-              className={`notification-item ${
-                isRead ? "read" : "unread"
-              }`}
-            >
-              <div>
-                <strong>{notification.title}</strong>
-
-                <p>{notification.message}</p>
-
-                <small>
-                  Severity: {notification.severity}
-                </small>
-              </div>
-
-              {!isRead && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    markAsRead(notification.id)
-                  }
-                >
-                  Mark Read
-                </button>
-              )}
-            </div>
-          );
-        })
-      )}
-    </div>
-  );
+      {!read.has(id) && <button className="text-button" type="button" onClick={() => markRead(id)}>Mark read</button>}
+    </article>;
+  })}</div>;
 }
-
-export default NotificationPanel;

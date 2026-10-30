@@ -11,6 +11,12 @@ from sqlalchemy import (
 from geoalchemy2 import Geometry
 from database import Base
 
+from sqlalchemy import ForeignKey
+from sqlalchemy.orm import relationship
+
+from sqlalchemy import func
+
+
 
 # =========================================
 # ROADS TABLE
@@ -114,3 +120,59 @@ class Weather(Base):
     condition = Column(String(100))
 
     timestamp = Column(DateTime(timezone=True))
+
+# =========================================
+# USER MODEL
+# =========================================
+
+
+class User(Base):
+
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    name = Column(String(100), nullable=False)
+
+    email = Column(String(150), unique=True, nullable=False, index=True)
+
+    password_hash = Column(Text, nullable=False)
+
+    role = Column(String(30), default="USER")
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    sessions = relationship(
+        "UserSession",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
+
+    # =========================================
+# USER SESSION MODEL
+# =========================================
+
+class UserSession(Base):
+
+    __tablename__ = "user_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    token_hash = Column(Text, unique=True, nullable=False)
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
+
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("User", back_populates="sessions")

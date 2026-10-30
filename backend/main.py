@@ -1,28 +1,125 @@
-from fastapi import Depends
-from sqlalchemy.orm import Session
+import json
+import logging
+import hashlib
+import os
+import secrets
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+from uuid import uuid4
+
+from fastapi import Depends, Request, Response
+from fastapi import FastAPI
+from fastapi import HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Road, Incident, Vehicle, Weather
+from models import Road, Incident, Vehicle, Weather, User, UserSession
 from geoalchemy2 import WKTElement
-from fastapi import HTTPException
-
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
-from datetime import datetime
-import json
-from pathlib import Path
 
 from data_gen import (
     get_vehicles,
     get_weather,
-    get_incidents,
 )
 
 from risk_model import predict_risk
 from routing import get_routes
+
+
+logger = logging.getLogger(__name__)
+
+SESSION_COOKIE = "nes_session"
+SESSION_TTL = timedelta(days=14)
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    derived = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1)
+    return f"scrypt${salt.hex()}${derived.hex()}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        algorithm, salt_hex, expected_hex = stored_hash.split("$", 2)
+        if algorithm != "scrypt":
+            return False
+        actual = hashlib.scrypt(
+            password.encode("utf-8"), salt=bytes.fromhex(salt_hex), n=2**14, r=8, p=1
+        )
+        return secrets.compare_digest(actual.hex(), expected_hex)
+    except (ValueError, TypeError):
+        return False
+
+
+def public_user(user: User) -> dict:
+    return {"id": user.id, "name": user.name, "email": user.email, "role": user.role}
+
+
+def issue_session(user: User, response: Response, db: Session) -> None:
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + SESSION_TTL
+    db.add(UserSession(
+        user_id=user.id,
+        token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        expires_at=expires_at,
+    ))
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=token,
+        httponly=True,
+        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
+        samesite="lax",
+        max_age=int(SESSION_TTL.total_seconds()),
+        path="/",
+    )
+
+
+def find_session_user(request: Request, db: Session) -> Optional[User]:
+    token = request.cookies.get(SESSION_COOKIE)
+    if not token:
+        return None
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    session = db.query(UserSession).filter(
+        UserSession.token_hash == token_hash,
+        UserSession.revoked_at.is_(None),
+        UserSession.expires_at > datetime.now(timezone.utc),
+    ).first()
+    return session.user if session else None
+
+
+def authenticated_user(request: Request, db: Session = Depends(get_db)) -> User:
+    user = find_session_user(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    return user
+
+
+class AuthInput(BaseModel):
+    email: str = Field(min_length=3, max_length=150)
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if "@" not in value:
+            raise ValueError("Enter a valid email address.")
+        return value
+
+
+class RegisterInput(AuthInput):
+    name: str = Field(min_length=1, max_length=100)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Name is required.")
+        return value
 
 
 app = FastAPI(
@@ -49,22 +146,29 @@ app.add_middleware(
 
 
 # ============================================================
-# SIMULATED IN-MEMORY INCIDENT STORE
-# ============================================================
-
-# active_incidents = get_incidents().copy()
-
-
-# ============================================================
 # INCIDENT MODEL
 # ============================================================
 
 class IncidentCreate(BaseModel):
-    type: str
-    severity: str
-    description: str
-    lat: Optional[float] = None
-    lon: Optional[float] = None
+    type: str = Field(min_length=1, max_length=100)
+    severity: str = Field(min_length=1, max_length=50)
+    description: str = Field(min_length=1)
+    lat: Optional[float] = Field(default=None, ge=-90, le=90)
+    lon: Optional[float] = Field(default=None, ge=-180, le=180)
+
+    @field_validator("type", "severity", "description")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("This field must not be blank.")
+        return value
+
+    @model_validator(mode="after")
+    def require_coordinate_pair(self):
+        if (self.lat is None) != (self.lon is None):
+            raise ValueError("Latitude and longitude must be provided together.")
+        return self
 
 
 # ============================================================
@@ -75,8 +179,72 @@ class IncidentCreate(BaseModel):
 def root():
     return {
         "message": "AI Smart Logistics API is running",
+        "docs": "/docs",
+        "redoc": "/redoc",
         "status": "OK"
     }
+
+
+@app.get("/api")
+def api_root():
+    return {
+        "message": "AI Smart Logistics API is running",
+        "docs": "/docs",
+        "redoc": "/redoc",
+        "status": "OK"
+    }
+
+
+@app.post("/api/auth/register", status_code=201)
+def register(payload: RegisterInput, response: Response, db: Session = Depends(get_db)):
+    email = payload.email
+    if db.query(User.id).filter(func.lower(User.email) == email).first():
+        raise HTTPException(status_code=409, detail="An account with this email already exists.")
+    user = User(name=payload.name, email=email, password_hash=hash_password(payload.password))
+    db.add(user)
+    try:
+        db.flush()
+        issue_session(user, response, db)
+        db.commit()
+        db.refresh(user)
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="An account with this email already exists.") from error
+    return {"user": public_user(user)}
+
+
+@app.post("/api/auth/login")
+def login(payload: AuthInput, response: Response, db: Session = Depends(get_db)):
+    user = db.query(User).filter(func.lower(User.email) == payload.email).first()
+    if not user or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Email or password is incorrect.")
+    issue_session(user, response, db)
+    db.commit()
+    return {"user": public_user(user)}
+
+
+@app.get("/api/auth/session")
+def auth_session(request: Request, db: Session = Depends(get_db)):
+    user = find_session_user(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not signed in.")
+    return {"user": public_user(user)}
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response, db: Session = Depends(get_db)):
+    token = request.cookies.get(SESSION_COOKIE)
+    if token:
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        session = db.query(UserSession).filter(
+            UserSession.token_hash == token_hash,
+            UserSession.revoked_at.is_(None),
+        ).first()
+        if session:
+            session.revoked_at = datetime.now(timezone.utc)
+            db.commit()
+    response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, samesite="lax")
+    return {"message": "Signed out."}
 
 
 
@@ -85,7 +253,7 @@ def root():
 # ============================================================
 
 @app.get("/api/vehicles")
-def vehicles(db: Session = Depends(get_db)):
+def vehicles(db: Session = Depends(get_db), _user: User = Depends(authenticated_user)):
 
     try:
 
@@ -165,7 +333,7 @@ def vehicles(db: Session = Depends(get_db)):
 # ============================================================
 
 @app.get("/api/weather")
-def weather(db: Session = Depends(get_db)):
+def weather(db: Session = Depends(get_db), _user: User = Depends(authenticated_user)):
 
     try:
 
@@ -215,43 +383,33 @@ def weather(db: Session = Depends(get_db)):
 # ============================================================
 
 @app.get("/api/incidents")
-def incidents(db: Session = Depends(get_db)):
+def incidents(db: Session = Depends(get_db), _user: User = Depends(authenticated_user)):
 
-    records = db.query(Incident).all()
+    records = db.query(
+        Incident,
+        func.ST_Y(Incident.geom).label("lat"),
+        func.ST_X(Incident.geom).label("lon"),
+    ).order_by(
+        Incident.timestamp.desc(),
+        Incident.id.desc(),
+    ).all()
 
-    result = []
-
-    for incident in records:
-
-        coordinates = None
-
-        if incident.geom is not None:
-            point = db.query(
-                func.ST_X(Incident.geom),
-                func.ST_Y(Incident.geom)
-            ).filter(
-                Incident.id == incident.id
-            ).first()
-
-            if point:
-                coordinates = {
-                    "lat": point[1],
-                    "lon": point[0]
-                }
-
-        result.append({
-            "id": incident.incident_code,
+    result = [
+        {
+            "id": incident.incident_code or f"INC-{incident.id:03d}",
             "type": incident.type,
             "severity": incident.severity,
             "description": incident.description,
-            "lat": coordinates["lat"] if coordinates else None,
-            "lon": coordinates["lon"] if coordinates else None,
+            "lat": lat,
+            "lon": lon,
             "timestamp": (
                 incident.timestamp.isoformat()
                 if incident.timestamp else None
             ),
-            "source": incident.source
-        })
+            "source": incident.source,
+        }
+        for incident, lat, lon in records
+    ]
 
     return {"incidents": result}
 
@@ -259,15 +417,14 @@ def incidents(db: Session = Depends(get_db)):
 @app.post("/api/incidents")
 def create_incident(
     incident: IncidentCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _user: User = Depends(authenticated_user),
 ):
 
     try:
 
-        incident_count = db.query(Incident).count()
-
         new_incident = Incident(
-            incident_code=f"INC-{incident_count + 1:03d}",
+            incident_code=f"INC-{uuid4().hex.upper()}",
             type=incident.type,
             severity=incident.severity,
             description=incident.description,
@@ -302,15 +459,17 @@ def create_incident(
             }
         }
 
-    except Exception as error:
+    except SQLAlchemyError as error:
         db.rollback()
-        return {
-            "error": str(error)
-        }
+        logger.exception("Failed to persist incident")
+        raise HTTPException(
+            status_code=500,
+            detail="Incident could not be saved.",
+        ) from error
 
 
 @app.get("/api/risk")
-def risk(db: Session = Depends(get_db)):
+def risk(db: Session = Depends(get_db), _user: User = Depends(authenticated_user)):
 
     # Fetch the latest weather record from the database
     latest_weather = (
@@ -336,9 +495,10 @@ def risk(db: Session = Depends(get_db)):
     incidents = db.query(Incident).all()
 
     for incident in incidents:
-        if incident.severity.upper() == "HIGH":
+        severity = (incident.severity or "").upper()
+        if severity == "HIGH":
             incident_boost += 20
-        elif incident.severity.upper() == "MEDIUM":
+        elif severity == "MEDIUM":
             incident_boost += 10
 
     # Add incident impact to predicted risk score
@@ -362,54 +522,12 @@ def risk(db: Session = Depends(get_db)):
     }
 
 
-    # --------------------------------------------------------
-    # INCIDENT IMPACT
-    # --------------------------------------------------------
-
-    incident_boost = 0
-
-    for incident in db.query(Incident).all():
-
-        if incident["severity"].upper() == "HIGH":
-
-            incident_boost += 20
-
-        elif incident["severity"].upper() == "MEDIUM":
-
-            incident_boost += 10
-
-    prediction["score"] = min(
-        100,
-        round(
-            prediction["score"] + incident_boost,
-            2
-        )
-    )
-
-    # Recalculate risk level
-    if prediction["score"] >= 70:
-        prediction["level"] = "HIGH"
-
-    elif prediction["score"] >= 40:
-        prediction["level"] = "MEDIUM"
-
-    else:
-        prediction["level"] = "LOW"
-
-
-    return {
-        "features": features,
-        "prediction": prediction,
-        "incident_impact": incident_boost,
-    }
-
-
 # ============================================================
 # ROUTES
 # ============================================================
 
 @app.get("/api/routes")
-def routes(db: Session = Depends(get_db)):
+def routes(db: Session = Depends(get_db), _user: User = Depends(authenticated_user)):
 
     route_data = get_routes(db)
 
@@ -420,16 +538,12 @@ def routes(db: Session = Depends(get_db)):
     # increase the primary route risk.
     # --------------------------------------------------------
 
-    for incident in active_incidents:
+    high_severity_incident = db.query(Incident.id).filter(
+        func.upper(Incident.severity) == "HIGH"
+    ).first()
 
-        if incident["severity"].upper() == "HIGH":
-
-            primary_risk = min(
-                100,
-                primary_risk + 13
-            )
-
-            break
+    if high_severity_incident:
+        primary_risk = min(100, primary_risk + 13)
 
 
     route_data["normal"]["risk_score"] = primary_risk
@@ -481,7 +595,7 @@ def routes(db: Session = Depends(get_db)):
 #         return json.load(file)
 
 @app.get("/api/network")
-def network(db: Session = Depends(get_db)):
+def network(db: Session = Depends(get_db), _user: User = Depends(authenticated_user)):
 
     roads = db.query(
         Road.name,
@@ -508,3 +622,8 @@ def network(db: Session = Depends(get_db)):
         "type": "FeatureCollection",
         "features": features
     }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

@@ -1,238 +1,47 @@
 import { useState } from "react";
 
-const API_URL = "http://127.0.0.1:8000";
-
-function IncidentForm({ onIncidentAdded, onTypeChange }) {
-
-  const [type, setType] = useState("LANDSLIDE");
-  const [severity, setSeverity] = useState("HIGH");
+export default function IncidentForm({ onIncidentAdded }) {
+  const [type, setType] = useState("ROAD_BLOCK");
+  const [severity, setSeverity] = useState("MEDIUM");
   const [description, setDescription] = useState("");
+  const [lat, setLat] = useState("");
+  const [lon, setLon] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState({ text: "", error: false });
 
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
-
-
-  async function handleSubmit(event) {
-
+  async function submit(event) {
     event.preventDefault();
-
-    setLoading(true);
-    setMessage("");
-
-
-    try {
-
-      const response = await fetch(
-        `${API_URL}/api/incidents`,
-        {
-          method: "POST",
-
-          headers: {
-            "Content-Type": "application/json",
-          },
-
-          body: JSON.stringify({
-            type,
-            severity,
-            description:
-              description ||
-              `${type} reported on the primary corridor.`,
-            lat: 25.365,
-            lon: 91.735,
-          }),
-        }
-      );
-
-
-      if (!response.ok) {
-        throw new Error(
-          "Failed to report incident"
-        );
-      }
-
-
-      const data =
-        await response.json();
-
-
-      // Send the new incident back to App.jsx
-      if (onIncidentAdded) {
-        onIncidentAdded(data.incident);
-      }
-
-
-      setMessage(
-        "Incident reported successfully."
-      );
-
-      setDescription("");
-
-
-    } catch (error) {
-
-      console.error(error);
-
-      setMessage(
-        "Could not report incident."
-      );
-
-    } finally {
-
-      setLoading(false);
-
+    setFeedback({ text: "", error: false });
+    if ((lat === "") !== (lon === "")) {
+      setFeedback({ text: "Enter both coordinates, or leave both blank.", error: true });
+      return;
     }
-
+    setBusy(true);
+    try {
+      const body = { type, severity, description: description.trim() };
+      if (lat !== "" && lon !== "") { body.lat = Number(lat); body.lon = Number(lon); }
+      const response = await fetch(`${import.meta.env.VITE_API_URL ?? ""}/api/incidents`, {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Incident could not be saved.");
+      onIncidentAdded?.(data.incident);
+      setDescription(""); setLat(""); setLon("");
+      setFeedback({ text: "Incident saved successfully.", error: false });
+    } catch (error) {
+      setFeedback({ text: error.message || "Could not connect to the server.", error: true });
+    } finally { setBusy(false); }
   }
 
-
   return (
-
-    <div className="panel">
-
-      <div className="panel-title">
-        Report Incident
-      </div>
-
-
-      <form
-        className="incident-form"
-        onSubmit={handleSubmit}
-      >
-
-        {/* INCIDENT TYPE */}
-
-        <label>
-
-          Incident Type
-
-          {/* <select
-            value={type}
-            onChange={(event) =>
-              setType(event.target.value)
-            }
-          >
-
-            <option value="LANDSLIDE">
-              Landslide
-            </option>
-
-            <option value="FLOOD">
-              Flood
-            </option>
-
-            <option value="ACCIDENT">
-              Accident
-            </option>
-
-            <option value="LOW_VISIBILITY">
-              Low Visibility
-            </option>
-
-            <option value="ROAD_BLOCK">
-              Road Block
-            </option>
-
-          </select> */}
-          <select
-          value={type}
-          onChange={(event) => {
-            const newType = event.target.value;
-            setType(newType);
-            if (onTypeChange) {
-              onTypeChange(newType);
-            }
-          }}>
-          <option value="LANDSLIDE">Landslide</option>
-          <option value="FLOOD">Flood</option>
-          <option value="ACCIDENT">Accident</option>
-          <option value="LOW_VISIBILITY">Low Visibility</option>
-          <option value="ROAD_BLOCK">Road Block</option>
-          
-          </select>
-
-        </label>
-
-
-        {/* SEVERITY */}
-
-        <label>
-
-          Severity
-
-          <select
-            value={severity}
-            onChange={(event) =>
-              setSeverity(event.target.value)
-            }
-          >
-
-            <option value="HIGH">
-              High
-            </option>
-
-            <option value="MEDIUM">
-              Medium
-            </option>
-
-            <option value="LOW">
-              Low
-            </option>
-
-          </select>
-
-        </label>
-
-
-        {/* DESCRIPTION */}
-
-        <label>
-
-          Description
-
-          <textarea
-            value={description}
-            onChange={(event) =>
-              setDescription(
-                event.target.value
-              )
-            }
-            placeholder="Describe the incident..."
-          />
-
-        </label>
-
-
-        {/* SUBMIT */}
-
-        <button
-          type="submit"
-          disabled={loading}
-        >
-
-          {loading
-            ? "Reporting..."
-            : "Report Incident"}
-
-        </button>
-
-
-        {/* STATUS */}
-
-        {message && (
-
-          <p>
-            {message}
-          </p>
-
-        )}
-
-      </form>
-
-    </div>
-
+    <form className="incident-form" onSubmit={submit}>
+      <label>Incident type<select value={type} onChange={(event) => setType(event.target.value)}><option value="ROAD_BLOCK">Road blockage</option><option value="LANDSLIDE">Landslide</option><option value="FLOOD">Flooding</option><option value="ACCIDENT">Road accident</option><option value="LOW_VISIBILITY">Low visibility</option><option value="OTHER">Other</option></select></label>
+      <label>Severity<select value={severity} onChange={(event) => setSeverity(event.target.value)}><option value="HIGH">High</option><option value="MEDIUM">Medium</option><option value="LOW">Low</option></select></label>
+      <label>Description<textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Describe what happened and any impact on the road…" required maxLength={2000} /></label>
+      <div className="coordinate-fields"><label>Latitude <span>(optional)</span><input type="number" min="-90" max="90" step="any" value={lat} onChange={(event) => setLat(event.target.value)} placeholder="e.g. 27.33" /></label><label>Longitude <span>(optional)</span><input type="number" min="-180" max="180" step="any" value={lon} onChange={(event) => setLon(event.target.value)} placeholder="e.g. 88.61" /></label></div>
+      <p className="form-hint">Add coordinates to place the incident on the map.</p>
+      <button className="primary-button" type="submit" disabled={busy}>{busy ? "Saving incident…" : "Submit incident report"}</button>
+      {feedback.text && <p className={`form-feedback ${feedback.error ? "error" : "success"}`} role="status">{feedback.text}</p>}
+    </form>
   );
-
 }
-
-
-export default IncidentForm;
