@@ -10,6 +10,21 @@ import "./App.css";
 const API_URL = import.meta.env.VITE_API_URL ?? "";
 const NORTHEAST_STATES = ["Arunachal Pradesh", "Assam", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Sikkim", "Tripura"];
 
+function applyCongestionSimulation(route) {
+  if (!route) return route;
+  const baseline = Number.isFinite(Number(route.risk_score)) ? Number(route.risk_score) : 0;
+  const riskScore = Math.min(100, Math.max(baseline, baseline * 0.69 + 45 * 0.16 + 85 * 0.15));
+  const riskLevel = riskScore >= 65 ? "HIGH" : riskScore >= 35 ? "MEDIUM" : "LOW";
+  return {
+    ...route,
+    risk_score: Number(riskScore.toFixed(1)),
+    risk_indicator: Number(riskScore.toFixed(1)),
+    risk_level: riskLevel,
+    risk_data_status: "SIMULATED",
+    risk_factors: [...new Set([...(route.risk_factors ?? []), "Congestion simulation: 2 affected sections (1 mild, 1 high)"])],
+  };
+}
+
 async function apiRequest(path, options = {}) {
   const response = await fetch(`${API_URL}${path}`, {
     credentials: "include",
@@ -38,9 +53,6 @@ function App() {
   const [selectedRoute, setSelectedRoute] = useState("normal");
   const [lastUpdated, setLastUpdated] = useState(null);
   const [signingOut, setSigningOut] = useState(false);
-  const [liveSources, setLiveSources] = useState(null);
-  const [liveSourcesError, setLiveSourcesError] = useState("");
-  const [loadingLiveSources, setLoadingLiveSources] = useState(false);
   const [trip, setTrip] = useState({
     originState: "Sikkim",
     destinationState: "Sikkim",
@@ -58,6 +70,7 @@ function App() {
   const [landslideError, setLandslideError] = useState("");
   const [showCoolr, setShowCoolr] = useState(false);
   const [showLhasa, setShowLhasa] = useState(false);
+  const [simulateCongestion, setSimulateCongestion] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -114,41 +127,6 @@ function App() {
   useEffect(() => {
     if (user) loadDashboard();
   }, [user, loadDashboard]);
-
-  const refreshLiveSources = useCallback(() => {
-    let active = true;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
-    setLoadingLiveSources(true);
-    setLiveSourcesError("");
-    apiRequest("/api/live-sources", { signal: controller.signal })
-      .then((data) => {
-        if (active) {
-          setLiveSources(data.sources ?? {});
-          setLiveSourcesError("");
-        }
-      })
-      .catch((error) => {
-        if (!active) return;
-        setLiveSourcesError(controller.signal.aborted
-          ? "Live-source checks timed out. Retry to check the providers again."
-          : error.message || "Live-source status is unavailable.");
-      })
-      .finally(() => {
-        clearTimeout(timer);
-        if (active) setLoadingLiveSources(false);
-      });
-    return () => {
-      active = false;
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!user) return undefined;
-    return refreshLiveSources();
-  }, [user, refreshLiveSources]);
 
   async function handleLogout() {
     setSigningOut(true);
@@ -217,6 +195,7 @@ function App() {
     setLandslideData(null);
     setShowCoolr(false);
     setShowLhasa(false);
+    setSimulateCongestion(false);
     setLandslideError("");
     try {
       const params = new URLSearchParams({
@@ -281,8 +260,16 @@ function App() {
   if (!user) return <AuthPage onAuthenticated={setUser} />;
 
   const { network, routes, vehicles, incidents } = dashboard;
+  const displayRoutes = simulateCongestion && routes ? {
+    ...routes,
+    normal: applyCongestionSimulation(routes.normal),
+    safer: routes.safer,
+  } : routes;
   const selectedConditions = routes?.route_conditions?.[selectedRoute];
+  const selectedRouteData = routes?.[selectedRoute];
   const routeRainfall = selectedConditions?.summary?.maximum_rainfall_mm;
+  const routeRainfall24h = selectedConditions?.summary?.maximum_rainfall_24h_mm;
+  const routeRainfallStatus = selectedConditions?.rainfall_status;
   const highSeverity = incidents.filter((incident) => String(incident.severity).toUpperCase() === "HIGH").length;
   const coolrPointCount = landslideData?.layers?.points?.features?.length ?? 0;
   const coolrAreaCount = landslideData?.layers?.polygons?.features?.length ?? 0;
@@ -336,7 +323,7 @@ function App() {
         <section className="metric-grid" aria-label="Operations summary">
           <article className="metric-card"><span className="metric-icon blue">↗</span><div><span className="metric-label">Tracked vehicles</span><strong>{vehicles.length}</strong><small>Vehicles reporting position</small></div></article>
           <article className="metric-card"><span className="metric-icon amber">⌁</span><div><span className="metric-label">Active incidents</span><strong>{incidents.length}</strong><small>{highSeverity} high severity</small></div></article>
-          <article className="metric-card"><span className="metric-icon violet">☂</span><div><span className="metric-label">Route rainfall</span><strong>{routeRainfall ?? "—"}<small className="metric-unit"> mm</small></strong><small>{selectedConditions?.status === "LIVE_CONNECTED" ? "Along the selected route" : "No current reading"}</small></div></article>
+          <article className="metric-card"><span className="metric-icon violet">☂</span><div><span className="metric-label">Selected route rainfall</span><strong>{routeRainfall ?? "—"}<small className="metric-unit"> mm</small></strong><small>{routeRainfallStatus === "LIVE_CONNECTED" ? `${selectedRouteData?.distance_km ?? "—"} km · ${selectedConditions?.points?.find((point) => point.rainfall_source)?.rainfall_source ?? "Live source"} · 24h ${routeRainfall24h ?? "—"} mm` : `${selectedRouteData?.distance_km ?? "—"} km · rainfall source unavailable`}</small></div></article>
           <article className="metric-card"><span className="metric-icon green">⌖</span><div><span className="metric-label">Road network</span><strong>{network?.features?.length ?? "—"}</strong><small>Mapped road segments</small></div></article>
         </section>
 
@@ -354,23 +341,18 @@ function App() {
                     <label><input type="checkbox" checked={showCoolr} onChange={(event) => setShowCoolr(event.target.checked)} /> Reported landslides ({coolrPointCount + coolrAreaCount})</label>
                     <label><input type="checkbox" checked={showLhasa} onChange={(event) => setShowLhasa(event.target.checked)} /> LHASA current hazard</label>
                   </>}
+                  {routes && <label className="congestion-simulation-toggle"><input type="checkbox" checked={simulateCongestion} onChange={(event) => setSimulateCongestion(event.target.checked)} /> Simulate congestion</label>}
                 </div>
               </div>
             </div>
             {landslideError && <p className="trip-search-error landslide-message" role="status">{landslideError}</p>}
             {landslideData && <p className="source-status-note landslide-source-note">{landslideData.status === "UNAVAILABLE" ? "NASA COOLR could not be reached. " : coolrPointCount + coolrAreaCount === 0 ? "No NASA COOLR reports or mapped areas were returned for this route in the last 7 days. " : `Loaded ${coolrPointCount} reported point(s) and ${coolrAreaCount} mapped area(s) from the last 7 days. `}COOLR reports are not verified road closures. LHASA is a separate regional hazard nowcast, not a road-level disruption probability.</p>}
-            <div className="map-frame"><MapView network={network} routes={routes} vehicles={vehicles} incidents={incidents} selectedRoute={selectedRoute} onSelectRoute={setSelectedRoute} landslideData={landslideData} showCoolr={showCoolr} showLhasa={showLhasa} /></div>
-            <div className="map-footer"><span><i className="legend-line road-legend" />Road network</span><span><i className="legend-line safe-route-legend" />Lower risk</span><span><i className="legend-line caution-route-legend" />Caution</span><span><i className="legend-line elevated-route-legend" />Elevated risk</span><span><i className="legend-line safer-legend" />Dashed line: alternative</span><span><i className="legend-dot incident-legend" />Incident</span>{routes && <span className="map-legend-note">Risk colors are heuristic, not verified closures or measured traffic. Fleet pins show vehicles within 2 km of the selected route.</span>}</div>
+            <div className="map-frame"><MapView network={network} routes={displayRoutes} vehicles={vehicles} incidents={incidents} selectedRoute={selectedRoute} onSelectRoute={setSelectedRoute} landslideData={landslideData} showCoolr={showCoolr} showLhasa={showLhasa} simulateCongestion={simulateCongestion} /></div>
+            <div className="map-footer"><span><i className="legend-line road-legend" />Road network</span><span><i className="legend-line safe-route-legend" />Lower risk</span><span><i className="legend-line caution-route-legend" />Caution</span><span><i className="legend-line elevated-route-legend" />Elevated risk</span><span><i className="legend-line safer-legend" />Dashed line: alternative</span><span><i className="legend-dot incident-legend" />Incident</span>{routes && <span className="map-legend-note">Congestion overlay and vehicle positions are simulations, not live traffic or GPS. Route weather is sampled from live sources when available.</span>}</div>
           </div>
 
           <aside className="side-column">
-            <AlertPanel routes={routes} selectedRoute={selectedRoute} onSelectRoute={setSelectedRoute} />
-            <div className="panel-card live-source-panel"><div className="card-heading"><div><p className="eyebrow">EXTERNAL FEEDS</p><h2>Live source status</h2></div><button className="text-button source-refresh-button" type="button" onClick={refreshLiveSources} disabled={loadingLiveSources}>{loadingLiveSources ? "Checking…" : "Refresh status"}</button></div>
-              {liveSourcesError ? <p className="empty-state">{liveSourcesError}</p> : !liveSources ? <p className="empty-state">Checking configured providers…</p> : <div className="source-status-list">{Object.entries(liveSources).map(([key, source]) => <div className="source-status-row" key={key}><span>{({open_meteo:"Open-Meteo",open_weather:"OpenWeather",nasa_eonet:"NASA EONET",nasa_firms:"NASA FIRMS",open_topography:"OpenTopography",open_street_map:"OpenStreetMap",isro_mosdac:"MOSDAC",copernicus_glofas:"GloFAS",mapillary:"Mapillary"})[key] ?? key}</span><span className={`source-status ${String(source.status || "UNKNOWN").toLowerCase()}`}>{source.status || "UNKNOWN"}</span></div>)}</div>}
-              <p className="source-status-note">Only LIVE CONNECTED feeds contain an upstream observation. Other providers need credentials or product setup.</p>
-            </div>
-            <div className="panel-card incident-create"><div className="card-heading"><div><p className="eyebrow">FIELD REPORT</p><h2>Report an incident</h2></div><span className="form-icon">＋</span></div>
-              <IncidentForm onIncidentAdded={handleIncidentAdded} /></div>
+            <AlertPanel routes={displayRoutes} selectedRoute={selectedRoute} onSelectRoute={setSelectedRoute} />
           </aside>
         </section>
 
@@ -383,6 +365,8 @@ function App() {
           <div className="panel-card incident-list-card"><div className="card-heading"><div><p className="eyebrow">SITUATIONAL AWARENESS</p><h2>Recent incidents</h2></div><span className="count-pill">{incidents.length} active</span></div>
             <NotificationPanel incidents={incidents} />
           </div>
+          <div className="panel-card incident-create"><div className="card-heading"><div><p className="eyebrow">FIELD REPORT</p><h2>Report an incident</h2></div><span className="form-icon">＋</span></div>
+            <IncidentForm onIncidentAdded={handleIncidentAdded} /></div>
         </section>
         <footer className="page-footer"><span>Northstar Logistics Intelligence</span><span>Risk-aware operations dashboard</span></footer>
       </main>

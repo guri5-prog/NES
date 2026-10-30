@@ -31,7 +31,8 @@ function routePositions(route) {
 }
 
 function riskColor(score, riskBand) {
-  if (riskBand === "congested" || riskBand === "elevated") return "#dc2626";
+  if (riskBand === "congested_high" || riskBand === "elevated") return "#dc2626";
+  if (riskBand === "congested_mild") return "#f97316";
   if (riskBand === "caution") return "#eab308";
   if (!Number.isFinite(score)) return "#2563eb";
   if (score >= 35) return "#dc2626";
@@ -97,6 +98,26 @@ function pointAlongRoute(route, fraction) {
   return route[route.length - 1];
 }
 
+function routeSlice(route, startFraction, endFraction) {
+  if (route.length < 2) return [];
+  const pointAt = (fraction) => {
+    const position = Math.max(0, Math.min(1, fraction)) * (route.length - 1);
+    const index = Math.floor(position);
+    const ratio = position - index;
+    const first = route[index];
+    const second = route[Math.min(index + 1, route.length - 1)];
+    return [first[0] + (second[0] - first[0]) * ratio, first[1] + (second[1] - first[1]) * ratio];
+  };
+  const firstPosition = startFraction * (route.length - 1);
+  const lastPosition = endFraction * (route.length - 1);
+  const points = [pointAt(startFraction)];
+  for (let index = Math.floor(firstPosition) + 1; index <= Math.floor(lastPosition); index += 1) {
+    if (index < route.length) points.push(route[index]);
+  }
+  points.push(pointAt(endFraction));
+  return points;
+}
+
 function escapePopup(value) {
   return String(value ?? "Unknown").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 }
@@ -107,7 +128,7 @@ function formatEventDate(value) {
   return Number.isNaN(date.getTime()) ? escapePopup(value) : escapePopup(date.toLocaleDateString());
 }
 
-function MapView({ network, routes, vehicles = [], incidents = [], selectedRoute = "normal", onSelectRoute, landslideData, showCoolr = false, showLhasa = false }) {
+function MapView({ network, routes, vehicles = [], incidents = [], selectedRoute = "normal", onSelectRoute, landslideData, showCoolr = false, showLhasa = false, simulateCongestion = false }) {
   const primary = useMemo(() => routePositions(routes?.normal), [routes]);
   const safer = useMemo(() => routePositions(routes?.safer), [routes]);
   const activeRoute = selectedRoute === "safer" ? safer : primary;
@@ -178,6 +199,10 @@ function MapView({ network, routes, vehicles = [], incidents = [], selectedRoute
         {network?.features?.length > 0 && <GeoJSON data={network} style={() => ({ color: "#8491a5", weight: 2, opacity: 0.45 })} />}
         {renderRoute("normal", primaryRiskRuns, primary, routes?.normal, selectedRoute === "normal", "#2563eb", "#94a3b8")}
         {renderRoute("safer", saferRiskRuns, safer, routes?.safer, selectedRoute === "safer", "#15945a", "#86b99b")}
+        {simulateCongestion && primary.length > 1 && <>
+          <Polyline positions={routeSlice(primary, 0.27, 0.43)} pathOptions={{ color: "#f97316", weight: 11, opacity: 0.92, lineCap: "round", lineJoin: "round" }}><Popup><strong>Simulated mild congestion</strong><br />Primary route · orange section · simulation only</Popup></Polyline>
+          <Polyline positions={routeSlice(primary, 0.67, 0.82)} pathOptions={{ color: "#dc2626", weight: 11, opacity: 0.94, lineCap: "round", lineJoin: "round" }}><Popup><strong>Simulated high congestion</strong><br />Primary route · red section · simulation only</Popup></Polyline>
+        </>}
         {activeRoute.length > 1 && <><CircleMarker center={activeRoute[0]} radius={7} pathOptions={{ color: "#fff", weight: 2, fillColor: "#16a34a", fillOpacity: 1 }}><Popup>Route start</Popup></CircleMarker><CircleMarker center={activeRoute[activeRoute.length - 1]} radius={7} pathOptions={{ color: "#fff", weight: 2, fillColor: "#2563eb", fillOpacity: 1 }}><Popup>Route destination</Popup></CircleMarker></>}
         {visibleVehicles.map(({ vehicle, index, position, offsetKm, simulated }) => <Marker key={vehicle.id ?? index} position={position} icon={vehicleIcon}>
           <Popup><strong>{simulated ? `Simulation vehicle ${index + 1}` : vehicle.id || "Vehicle"}</strong><br />{vehicle.driver || "Driver not specified"}<br />{vehicle.cargo || "Cargo not specified"}<br />Speed: {vehicle.speed ?? "—"} km/h<br />Status: {simulated ? "Simulated on selected route" : vehicle.status || "Unknown"}{offsetKm != null && <><br />Marker aligned to selected route; GPS offset {offsetKm.toFixed(1)} km.</>}</Popup>
