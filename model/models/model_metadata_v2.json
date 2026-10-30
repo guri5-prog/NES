@@ -1,0 +1,71 @@
+{
+  "model_version": "v2.0",
+  "model_name": "Candidate_RandomForest_v2",
+  "saved_path": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\model\\models\\random_forest_final_v2.joblib",
+  "created_at": "2026-10-30T21:50:37.713146",
+  "training_environment": {
+    "python_version": "3.13.4",
+    "os_platform": "Windows-11-10.0.26300-SP0",
+    "scikit_learn_version": "1.7.1",
+    "pandas_version": "2.3.2",
+    "numpy_version": "2.2.6"
+  },
+  "training_dataset": {
+    "path": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\final_validation\\candidate_4_full_corrected_model_ready.csv",
+    "observed_samples": 838,
+    "class_distribution": {
+      "1": 419,
+      "0": 419
+    },
+    "synthetic_samples_utilized": 4000
+  },
+  "features": [
+    "elevation",
+    "slope",
+    "aspect_sin",
+    "aspect_cos",
+    "is_flat_aspect",
+    "curvature_total",
+    "plan_curvature",
+    "profile_curvature",
+    "terrain_ruggedness_tri",
+    "topographic_position_tpi",
+    "clay_0_5cm",
+    "clay_5_15cm",
+    "clay_diff_5_15_minus_0_5",
+    "sand_0_5cm",
+    "sand_5_15cm",
+    "sand_diff_5_15_minus_0_5",
+    "soc_0_5cm",
+    "soc_5_15cm",
+    "soc_diff_5_15_minus_0_5",
+    "phh2o_0_5cm",
+    "phh2o_5_15cm",
+    "ph_diff_5_15_minus_0_5",
+    "distance_to_roads_m",
+    "landcover_code"
+  ],
+  "hyperparameters": {
+    "n_estimators": 300,
+    "min_samples_split": 5,
+    "min_samples_leaf": 6,
+    "max_features": "log2",
+    "max_depth": 14,
+    "class_weight": "balanced_subsample",
+    "random_state": 42,
+    "n_jobs": -1
+  },
+  "spatial_validation_metrics": {
+    "mean_roc_auc": 0.79,
+    "std_roc_auc": 0.0754,
+    "mean_pr_auc": 0.7561,
+    "std_pr_auc": 0.1214,
+    "mean_brier_score": 0.1987,
+    "mean_f1_score": 0.6393
+  },
+  "methodological_notes": {
+    "spatial_cv": "Strict 5-fold leave-one-spatial-fold-out cross-validation.",
+    "synthetic_data_isolation": "Synthetic samples grouped strictly with parent folds; validation strictly on held-out Candidate 4 records.",
+    "road_disruption_warning": "DISCLAIMER: Susceptibility scores reflect baseline terrain, topographic, and edaphic susceptibility to landslide initiation under mapped inventory conditions. They do NOT represent real-time road closure probabilities, traffic disruption risks, or weather-induced hazard states."
+  }
+}

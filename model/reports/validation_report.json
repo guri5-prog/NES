@@ -1,0 +1,38 @@
+{
+  "generated_at": "2026-10-30T15:32:31.489357+00:00",
+  "candidate4_rows": 838,
+  "checks": [
+    {
+      "check": "susceptibility_record_count",
+      "passed": true
+    },
+    {
+      "check": "road_record_count",
+      "passed": true
+    },
+    {
+      "check": "all_synthetic_provenance",
+      "passed": "True"
+    },
+    {
+      "check": "no_synthetic_susceptibility_target",
+      "passed": true
+    },
+    {
+      "check": "road_labels_marked_simulated",
+      "passed": "True"
+    },
+    {
+      "check": "simulation_scores_in_range",
+      "passed": "True"
+    }
+  ],
+  "all_checks_passed": true,
+  "limitations": [
+    "Synthetic susceptibility rows have no independent ground-truth labels.",
+    "Teacher predictions reproduce the existing RF and are not new observations.",
+    "Road disruption labels are simulation-rule outputs, not verified closures.",
+    "Even when a real OSM ID is attached, Candidate 4 environmental anchors have not been spatially extracted for that specific road segment.",
+    "Scores are not calibrated probabilities. SIM_ONLY IDs must not be used for real routing."
+  ]
+}

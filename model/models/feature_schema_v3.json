@@ -1,0 +1,237 @@
+{
+  "schema_version": "3.0.0",
+  "description": "Landslide Susceptibility Model Predictor Schema for Sikkim Smart Logistics",
+  "updated_at": "2026-10-30T21:50:37.702229",
+  "total_predictors": 24,
+  "target_definition": {
+    "name": "target_label",
+    "type": "binary_integer",
+    "values": {
+      "0": "Background non-landslide sample point",
+      "1": "Mapped historical landslide inventory point"
+    },
+    "disclaimer": "Labels denote slope failure initiation probability, NOT road closure or disruption."
+  },
+  "numerical_features": {
+    "elevation": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": 287.5,
+      "observed_max": 4701.421875,
+      "observed_mean": 2119.367077301681,
+      "observed_std": 1177.6346026433866
+    },
+    "slope": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": 3.1266794204711914,
+      "observed_max": 67.76614379882812,
+      "observed_mean": 34.45963142822921,
+      "observed_std": 10.88688580153298
+    },
+    "aspect_sin": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": -0.9998617,
+      "observed_max": 1.0,
+      "observed_mean": 0.2505060738976969,
+      "observed_std": 0.6917882062449466
+    },
+    "aspect_cos": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": -0.99999976,
+      "observed_max": 0.9999838,
+      "observed_mean": 0.02304219291593078,
+      "observed_std": 0.6776901772275649
+    },
+    "is_flat_aspect": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": 0.0,
+      "observed_max": 0.0,
+      "observed_mean": 0.0,
+      "observed_std": 0.0
+    },
+    "curvature_total": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": -5.324272632598877,
+      "observed_max": 5.264214515686035,
+      "observed_mean": -0.2191238631505457,
+      "observed_std": 1.1819518220435656
+    },
+    "plan_curvature": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": -10.623934745788574,
+      "observed_max": 17.46690559387207,
+      "observed_mean": 0.42606625887209504,
+      "observed_std": 2.60195951603705
+    },
+    "profile_curvature": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": -4.79608154296875,
+      "observed_max": 2.704566717147827,
+      "observed_mean": -0.09088329695079582,
+      "observed_std": 0.722392925374681
+    },
+    "terrain_ruggedness_tri": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": 1.646140456199646,
+      "observed_max": 63.02114486694336,
+      "observed_mean": 19.301673077598107,
+      "observed_std": 7.847010083836353
+    },
+    "topographic_position_tpi": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": -14.97021484375,
+      "observed_max": 12.5032958984375,
+      "observed_mean": -0.6946680983950813,
+      "observed_std": 3.638341016424524
+    },
+    "clay_0_5cm": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": 97.01740264892578,
+      "observed_max": 278.6564636230469,
+      "observed_mean": 171.1258758417462,
+      "observed_std": 36.57028988198192
+    },
+    "clay_5_15cm": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": 91.07254028320312,
+      "observed_max": 300.09002685546875,
+      "observed_mean": 178.3669971293083,
+      "observed_std": 40.91728563314809
+    },
+    "clay_diff_5_15_minus_0_5": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": -16.972503662109375,
+      "observed_max": 38.143646240234375,
+      "observed_mean": 7.241121287562113,
+      "observed_std": 8.121301826682888
+    },
+    "sand_0_5cm": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": 254.655014038086,
+      "observed_max": 567.591796875,
+      "observed_mean": 384.16141954299087,
+      "observed_std": 65.67180165607425
+    },
+    "sand_5_15cm": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": 252.8319549560547,
+      "observed_max": 576.1778564453125,
+      "observed_mean": 381.79955954540316,
+      "observed_std": 65.48864230094219
+    },
+    "sand_diff_5_15_minus_0_5": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": -39.522003173828125,
+      "observed_max": 26.228057861328125,
+      "observed_mean": -2.3618599975877275,
+      "observed_std": 7.296023334941794
+    },
+    "soc_0_5cm": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": 209.8771514892578,
+      "observed_max": 836.93994140625,
+      "observed_mean": 410.35941453082467,
+      "observed_std": 151.45586299436238
+    },
+    "soc_5_15cm": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": 145.29229736328125,
+      "observed_max": 584.6337890625,
+      "observed_mean": 294.70834192171304,
+      "observed_std": 109.17643295306553
+    },
+    "soc_diff_5_15_minus_0_5": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": -370.8971557617188,
+      "observed_max": 19.2786865234375,
+      "observed_mean": -115.65107260911164,
+      "observed_std": 62.66378237379819
+    },
+    "phh2o_0_5cm": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": 50.08721923828125,
+      "observed_max": 69.24700927734375,
+      "observed_mean": 54.414075578311746,
+      "observed_std": 4.457975167538533
+    },
+    "phh2o_5_15cm": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": 50.08721923828125,
+      "observed_max": 69.24700927734375,
+      "observed_mean": 54.383883378386216,
+      "observed_std": 4.700650401566382
+    },
+    "ph_diff_5_15_minus_0_5": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": -1.6791763305664062,
+      "observed_max": 2.94873046875,
+      "observed_mean": -0.030192199925534197,
+      "observed_std": 0.5009703425997785
+    },
+    "distance_to_roads_m": {
+      "type": "float",
+      "imputation_strategy": "median",
+      "observed_min": 0.0,
+      "observed_max": 15978.9921875,
+      "observed_mean": 1572.5438500998414,
+      "observed_std": 2638.166263583639
+    }
+  },
+  "categorical_features": {
+    "landcover_code": {
+      "type": "categorical_float_or_int",
+      "imputation_strategy": "most_frequent",
+      "encoding": "one_hot_encoder",
+      "observed_categories": [
+        10.0,
+        30.0,
+        50.0,
+        60.0,
+        80.0,
+        100.0
+      ]
+    }
+  },
+  "classification_thresholds": {
+    "LOW": "< 0.35",
+    "MEDIUM": "0.35 - 0.65",
+    "HIGH": ">= 0.65"
+  },
+  "excluded_features_and_reasons": {
+    "target_label": "Target ground truth (leakage prevention)",
+    "spatial_fold": "Validation partition identifier (leakage prevention)",
+    "event_group_id": "Spatial clustering identifier (leakage prevention)",
+    "inventory_id": "Record identifier (metadata)",
+    "original_id": "Record identifier (metadata)",
+    "source_dataset": "Administrative metadata",
+    "x_utm": "Coordinate predictor exclusion (prevents spatial coordinate memorization)",
+    "y_utm": "Coordinate predictor exclusion (prevents spatial coordinate memorization)",
+    "longitude": "Coordinate predictor exclusion (prevents spatial coordinate memorization)",
+    "latitude": "Coordinate predictor exclusion (prevents spatial coordinate memorization)",
+    "aspect": "Redundant raw degrees; transformed into aspect_sin, aspect_cos, is_flat_aspect",
+    "teacher_prediction": "Synthetic teacher label (leakage prevention)"
+  },
+  "scientific_disclaimer": "DISCLAIMER: Susceptibility scores reflect baseline terrain, topographic, and edaphic susceptibility to landslide initiation under mapped inventory conditions. They do NOT represent real-time road closure probabilities, traffic disruption risks, or weather-induced hazard states.",
+  "audit_note": "Validated under strict spatial fold-isolated teacher training."
+}

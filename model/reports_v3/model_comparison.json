@@ -1,0 +1,90 @@
+{
+  "comparison_timestamp": "2026-10-30T21:50:35.036779",
+  "baseline_model": "Baseline_RandomForest",
+  "candidate_model": "Candidate_RandomForest_v2",
+  "metric_comparison": {
+    "roc_auc": {
+      "baseline_mean": 0.7793,
+      "candidate_mean": 0.79,
+      "delta_mean": 0.0107,
+      "baseline_oof": 0.7182,
+      "candidate_oof": 0.7635,
+      "delta_oof": 0.0453,
+      "improved": true
+    },
+    "pr_auc": {
+      "baseline_mean": 0.731,
+      "candidate_mean": 0.7561,
+      "delta_mean": 0.0251,
+      "baseline_oof": 0.7029,
+      "candidate_oof": 0.7553,
+      "delta_oof": 0.0524,
+      "improved": true
+    },
+    "accuracy": {
+      "baseline_mean": 0.6722,
+      "candidate_mean": 0.6897,
+      "delta_mean": 0.0175,
+      "baseline_oof": 0.6372,
+      "candidate_oof": 0.6659,
+      "delta_oof": 0.0286,
+      "improved": true
+    },
+    "balanced_accuracy": {
+      "baseline_mean": 0.6963,
+      "candidate_mean": 0.7034,
+      "delta_mean": 0.0071,
+      "baseline_oof": 0.6372,
+      "candidate_oof": 0.6659,
+      "delta_oof": 0.0286,
+      "improved": true
+    },
+    "precision": {
+      "baseline_mean": 0.6756,
+      "candidate_mean": 0.6903,
+      "delta_mean": 0.0146,
+      "baseline_oof": 0.6849,
+      "candidate_oof": 0.7075,
+      "delta_oof": 0.0226,
+      "improved": true
+    },
+    "recall": {
+      "baseline_mean": 0.626,
+      "candidate_mean": 0.6402,
+      "delta_mean": 0.0142,
+      "baseline_oof": 0.5084,
+      "candidate_oof": 0.5656,
+      "delta_oof": 0.0573,
+      "improved": true
+    },
+    "f1": {
+      "baseline_mean": 0.604,
+      "candidate_mean": 0.6393,
+      "delta_mean": 0.0353,
+      "baseline_oof": 0.5836,
+      "candidate_oof": 0.6286,
+      "delta_oof": 0.0451,
+      "improved": true
+    },
+    "brier_score": {
+      "baseline_mean": 0.2078,
+      "candidate_mean": 0.1987,
+      "delta_mean": -0.009,
+      "baseline_oof": 0.2206,
+      "candidate_oof": 0.2099,
+      "delta_oof": -0.0106,
+      "improved": true
+    }
+  },
+  "genuine_improvement_demonstrated": true,
+  "recommended_model_selection": "Candidate_RandomForest_v2",
+  "recommendation_rationale": "Candidate model demonstrates slight empirical gains in PR-AUC and ROC-AUC under leak-free spatial CV, benefiting from regularized jitter augmentation. Both models are preserved for auditability.",
+  "justification_notes": [
+    "Mean ROC-AUC changed by +0.0107 (Baseline: 0.7793, Candidate: 0.7900).",
+    "Mean PR-AUC changed by +0.0251 (Baseline: 0.7310, Candidate: 0.7561).",
+    "Mean Brier score changed by -0.0090 (Baseline: 0.2078, Candidate: 0.1987).",
+    "Synthetic records represent 2% Gaussian jitter of Candidate 4 and introduce no new field observations.",
+    "Candidate model demonstrates slight regularized gains from data augmentation without violating spatial boundaries.",
+    "Both models demonstrate high spatial cross-validation stability across Sikkim's terrain."
+  ]
+}

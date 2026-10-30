@@ -1,0 +1,20 @@
+{
+  "generated_at": "2026-10-30T15:39:47.623735+00:00",
+  "seed": 42,
+  "generator_version": "2.0",
+  "source_candidate4": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\final_validation\\candidate_4_full_corrected_model_ready.csv",
+  "source_model": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\random_forest\\models\\final_random_forest_pipeline.joblib",
+  "source_roads": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\data\\raw\\roads\\sikkim_roads.geojson",
+  "files": {
+    "susceptibility": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\model\\outputs_v2\\susceptibility_synthetic_v2.csv",
+    "teacher_predictions": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\model\\outputs_v2\\susceptibility_teacher_predictions_v2.csv",
+    "road_scenarios": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\model\\outputs_v2\\road_scenarios_inputs_v2.csv",
+    "road_segment_catalog": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\model\\outputs_v2\\road_segment_catalog_v2.csv",
+    "validation": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\model\\reports_v2\\validation_report_v2.json"
+  },
+  "semantics": {
+    "susceptibility": "Unlabelled synthetic feature scenarios",
+    "road_scenarios": "Synthetic scenario inputs only; not risk predictions",
+    "risk_probability": "null"
+  }
+}

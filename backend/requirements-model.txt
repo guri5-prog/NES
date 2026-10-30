@@ -1,0 +1,4 @@
+# Match the scikit-learn version recorded in model/models/model_metadata_v3.json.
+scikit-learn==1.7.1
+joblib>=1.4,<2
+pandas>=2.2,<3

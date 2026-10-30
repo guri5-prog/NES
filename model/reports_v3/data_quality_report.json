@@ -1,0 +1,100 @@
+{
+  "timestamp": "2026-10-30T21:48:57.108607",
+  "candidate_4": {
+    "row_count": 838,
+    "column_count": 46,
+    "class_distribution": {
+      "1": 419,
+      "0": 419
+    },
+    "spatial_fold_distribution": {
+      "1": 125,
+      "2": 145,
+      "3": 262,
+      "4": 161,
+      "5": 145
+    },
+    "missing_values": 0,
+    "observed_labels_verified": true
+  },
+  "synthetic_susceptibility_v2": {
+    "available": true,
+    "row_count": 4000,
+    "missing_values": 0,
+    "provenance": "2% Gaussian jitter augmentation around Candidate 4 records",
+    "has_independent_ground_truth": false
+  },
+  "teacher_predictions_v2": {
+    "available": true,
+    "row_count": 4000,
+    "provenance": "Predicted by baseline Random Forest model (models/final_random_forest_pipeline.joblib)",
+    "is_ground_truth": false
+  },
+  "road_scenarios_inputs_v2": {
+    "available": true,
+    "row_count": 6000,
+    "columns": [
+      "scenario_id",
+      "segment_id",
+      "u",
+      "v",
+      "edge_key",
+      "osm_way_ids",
+      "road_name",
+      "road_type",
+      "segment_length_m",
+      "centroid_longitude",
+      "centroid_latitude",
+      "geometry_type",
+      "rainfall_1d_synthetic_mm",
+      "rainfall_3d_synthetic_mm",
+      "rainfall_7d_synthetic_mm",
+      "scenario_category",
+      "risk_probability",
+      "risk_score",
+      "disruption_label",
+      "simulation_status",
+      "data_origin",
+      "label_source",
+      "label_is_observed",
+      "generator_version",
+      "random_seed",
+      "environmental_features_status"
+    ],
+    "environmental_features_status": [
+      "NOT_EXTRACTED_FROM_SEGMENT_GEOMETRY"
+    ],
+    "scenario_categories": {
+      "PROLONGED_RAINFALL": 1200,
+      "RIVER_FLOOD_EXPOSURE": 1200,
+      "STEEP_TERRAIN_EXPOSURE": 1200,
+      "HEAVY_RAINFALL": 1200,
+      "NORMAL_CONDITIONS": 1200
+    }
+  },
+  "road_segment_catalog_v2": {
+    "available": true,
+    "row_count": 11184,
+    "columns": [
+      "segment_id",
+      "u",
+      "v",
+      "edge_key",
+      "osm_way_ids",
+      "road_name",
+      "road_type",
+      "segment_length_m",
+      "centroid_longitude",
+      "centroid_latitude",
+      "geometry_type"
+    ]
+  },
+  "methodological_guardrails": [
+    "Candidate 4 is the sole ground-truth evaluation dataset.",
+    "Synthetic records have NO independent field observation labels.",
+    "Teacher predictions are baseline model outputs and MUST NOT be treated as observed truth.",
+    "Parent records and synthetic descendants MUST share the same data partition to prevent spatial leakage.",
+    "Road scenarios contain simulated rainfall inputs only; environmental raster features are NOT extracted.",
+    "Road scenarios CANNOT be used to train supervised road disruption classifiers."
+  ]
+}

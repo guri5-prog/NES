@@ -6,9 +6,8 @@ from database import SessionLocal
 from models import Road
 
 GEOJSON_PATH = (
-    Path(__file__).parent
-    / "data"
-    / "road_network.geojson"
+    Path(__file__).resolve().parent.parent
+    / "Dataset" / "data" / "raw" / "roads" / "sikkim_roads.geojson"
 )
 
 
@@ -28,9 +27,11 @@ def import_roads():
             if geometry["type"] != "LineString":
                 continue
 
-            name = properties.get("name", "Unnamed Road")
+            name = properties.get("name") or properties.get("ref") or properties.get("highway") or "Road"
+            # This GeoJSON is an OSM edge export; names are frequently absent or repeated.
+            name = f"{name} (OSM {properties.get('osmid', properties.get('u', count + 1))}-{properties.get('v', '')})"
             risk = float(properties.get("risk", 0))
-            route_type = properties.get("route_type", "alternate")
+            route_type = properties.get("highway", "road")
 
             coordinates = geometry["coordinates"]
 
