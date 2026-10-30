@@ -1,23 +1,19 @@
+
 """
 Risk-aware route calculation.
 
-The prototype contains a primary route and a genuine alternate
-route through different road segments.
-
-Production version:
-- Road network -> PostGIS
-- Live incidents -> government/API feeds
-- Weather -> live weather API
-- Risk -> trained ML model
+Road network is retrieved from PostgreSQL/PostGIS.
+NetworkX is used to calculate primary and safer routes.
 """
 
-from pathlib import Path
-import json
 import math
+import json
 import networkx as nx
 
+from sqlalchemy.orm import Session
+from sqlalchemy import func
 
-GEOJSON_PATH = Path(__file__).parent / "data" / "road_network.geojson"
+from models import Road
 
 
 def haversine_distance(a, b):
@@ -47,58 +43,40 @@ def haversine_distance(a, b):
     )
 
 
-def load_geojson():
-    """Load the road network GeoJSON."""
-
-    if not GEOJSON_PATH.exists():
-        return None
-
-    with open(GEOJSON_PATH, "r", encoding="utf-8") as file:
-        return json.load(file)
-
-
-def build_graph():
-    """Build a NetworkX road graph from GeoJSON."""
-
-    geojson = load_geojson()
+def build_graph(db: Session):
+    """Build a NetworkX graph using road data from PostGIS."""
 
     graph = nx.Graph()
 
-    if not geojson:
-        return graph
+    roads = db.query(
+        Road.name,
+        Road.risk,
+        Road.route_type,
+        func.ST_AsGeoJSON(Road.geom).label("geometry")
+    ).filter(Road.geom.isnot(None)).all()
 
-    for feature in geojson.get("features", []):
+    for road in roads:
 
-        geometry = feature.get("geometry", {})
+        if not road.geometry:
+            continue
+
+        geometry = json.loads(road.geometry)
 
         if geometry.get("type") != "LineString":
             continue
 
         coordinates = geometry.get("coordinates", [])
 
-        properties = feature.get("properties", {})
-
-        risk = float(properties.get("risk", 20))
-
-        road_name = properties.get(
-            "name",
-            "Unnamed Road"
-        )
-
-        road_type = properties.get(
-            "route_type",
-            "alternate"
-        )
+        risk = float(road.risk or 0)
+        road_name = road.name or "Unnamed Road"
+        road_type = road.route_type or "alternate"
 
         for i in range(len(coordinates) - 1):
 
             start = tuple(coordinates[i])
             end = tuple(coordinates[i + 1])
 
-            distance = haversine_distance(
-                start,
-                end
-            )
+            distance = haversine_distance(start, end)
 
             graph.add_node(start)
             graph.add_node(end)
@@ -141,7 +119,6 @@ def get_path_details(graph, path):
         edge = graph[u][v]
 
         total_distance += edge["distance"]
-
         risks.append(edge["risk"])
 
     average_risk = (
@@ -151,38 +128,21 @@ def get_path_details(graph, path):
     )
 
     return {
-        "coordinates": [
-            list(node)
-            for node in path
-        ],
-        "distance_km": round(
-            total_distance,
-            2
-        ),
-        "risk_score": round(
-            average_risk,
-            2
-        ),
+        "coordinates": [list(node) for node in path],
+        "distance_km": round(total_distance, 2),
+        "risk_score": round(average_risk, 2),
     }
 
 
 def calculate_route(
+    db: Session,
     start,
     destination,
     avoid_high_risk=False
 ):
-    """
-    Calculate a route.
+    """Calculate a route using the PostGIS road network."""
 
-    Normal mode:
-        Prefer the designated primary route.
-
-    Safer mode:
-        Penalize high-risk roads heavily so the algorithm
-        searches for a genuinely safer alternative.
-    """
-
-    graph = build_graph()
+    graph = build_graph(db)
 
     if graph.number_of_nodes() == 0:
         return {
@@ -192,15 +152,8 @@ def calculate_route(
             "route_type": "unknown",
         }
 
-    start_node = nearest_node(
-        graph,
-        start
-    )
-
-    destination_node = nearest_node(
-        graph,
-        destination
-    )
+    start_node = nearest_node(graph, start)
+    destination_node = nearest_node(graph, destination)
 
     if start_node is None or destination_node is None:
         return {
@@ -210,35 +163,21 @@ def calculate_route(
             "route_type": "unknown",
         }
 
-    # --------------------------------------------------
-    # NORMAL ROUTE
-    # --------------------------------------------------
+    # Normal route: prefer primary roads.
 
     if not avoid_high_risk:
 
-        primary_edges = [
-            (
-                u,
-                v,
-                data
-            )
-            for u, v, data
-            in graph.edges(data=True)
-            if data.get("route_type") == "primary"
-        ]
-
         primary_graph = nx.Graph()
 
-        for u, v, data in primary_edges:
+        for u, v, data in graph.edges(data=True):
 
-            primary_graph.add_edge(
-                u,
-                v,
-                distance=data["distance"],
-                risk=data["risk"],
-                road=data["road"],
-                route_type=data["route_type"],
-            )
+            if data.get("route_type") == "primary":
+
+                primary_graph.add_edge(
+                    u,
+                    v,
+                    **data
+                )
 
         try:
 
@@ -249,52 +188,26 @@ def calculate_route(
                 weight="distance",
             )
 
-            result = get_path_details(
-                primary_graph,
-                path
-            )
-
+            result = get_path_details(primary_graph, path)
             result["route_type"] = "primary"
 
             return result
 
-        except nx.NetworkXNoPath:
-
-            # Fallback if the primary network is incomplete
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
             pass
 
-    # --------------------------------------------------
-    # SAFER ROUTE
-    # --------------------------------------------------
+    # Safer route: penalize roads with higher risk.
 
     route_graph = graph.copy()
 
-    for u, v, data in route_graph.edges(
-        data=True
-    ):
+    for u, v, data in route_graph.edges(data=True):
 
         distance = data["distance"]
         risk = data["risk"]
 
-        if avoid_high_risk:
-
-            # Strong penalty for risky roads.
-            #
-            # Example:
-            # risk 80 -> huge routing cost
-            # risk 20 -> relatively small cost
-            #
-            data["routing_cost"] = (
-                distance
-                * (
-                    1
-                    + (risk / 100) * 12
-                )
-            )
-
-        else:
-
-            data["routing_cost"] = distance
+        data["routing_cost"] = (
+            distance * (1 + (risk / 100) * 12)
+        )
 
     try:
 
@@ -305,7 +218,7 @@ def calculate_route(
             weight="routing_cost",
         )
 
-    except nx.NetworkXNoPath:
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
 
         return {
             "coordinates": [],
@@ -314,10 +227,7 @@ def calculate_route(
             "route_type": "none",
         }
 
-    result = get_path_details(
-        route_graph,
-        path
-    )
+    result = get_path_details(route_graph, path)
 
     result["route_type"] = (
         "safer_alternate"
@@ -328,26 +238,21 @@ def calculate_route(
     return result
 
 
-def get_routes():
-    """Return primary and AI-recommended safer routes."""
+def get_routes(db: Session):
+    """Return primary and safer routes using database roads."""
 
-    start = [
-        91.8933,
-        25.5788
-    ]
-
-    destination = [
-        91.7033,
-        25.267
-    ]
+    start = [91.8933, 25.5788]
+    destination = [91.7033, 25.267]
 
     normal_route = calculate_route(
+        db,
         start,
         destination,
         avoid_high_risk=False,
     )
 
     safer_route = calculate_route(
+        db,
         start,
         destination,
         avoid_high_risk=True,
