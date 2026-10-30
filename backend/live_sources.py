@@ -473,8 +473,10 @@ def get_live_nasa_eonet_events(bbox: List[float], days: int = 30) -> Dict[str, A
     west,south,east,north = bbox
     key = f"eonet:{','.join(f'{n:.3f}' for n in bbox)}:{days}"
     def load():
+        # EONET expects upper-left (west,north) then lower-right (east,south),
+        # unlike this application's common [west,south,east,north] bbox order.
         params = urllib.parse.urlencode({"category":"severeStorms,landslides,floods","days":days,"status":"open",
-                                         "bbox":f"{west},{south},{east},{north}"})
+                                         "bbox":f"{west},{north},{east},{south}"})
         data = _json("https://eonet.gsfc.nasa.gov/api/v3/events?" + params, timeout=6.0)
         if data is None:
             return {"source":"NASA EONET v3", "status":"UNAVAILABLE", "events":[], "total_active_events":None,"bbox":bbox}
