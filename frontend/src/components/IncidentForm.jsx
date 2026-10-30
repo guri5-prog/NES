@@ -2,7 +2,7 @@ import { useState } from "react";
 
 const API_URL = "http://127.0.0.1:8000";
 
-function IncidentForm({ onIncidentAdded }) {
+function IncidentForm({ onIncidentAdded, onTypeChange }) {
 
   const [type, setType] = useState("LANDSLIDE");
   const [severity, setSeverity] = useState("HIGH");
@@ -105,7 +105,7 @@ function IncidentForm({ onIncidentAdded }) {
 
           Incident Type
 
-          <select
+          {/* <select
             value={type}
             onChange={(event) =>
               setType(event.target.value)
@@ -132,6 +132,22 @@ function IncidentForm({ onIncidentAdded }) {
               Road Block
             </option>
 
+          </select> */}
+          <select
+          value={type}
+          onChange={(event) => {
+            const newType = event.target.value;
+            setType(newType);
+            if (onTypeChange) {
+              onTypeChange(newType);
+            }
+          }}>
+          <option value="LANDSLIDE">Landslide</option>
+          <option value="FLOOD">Flood</option>
+          <option value="ACCIDENT">Accident</option>
+          <option value="LOW_VISIBILITY">Low Visibility</option>
+          <option value="ROAD_BLOCK">Road Block</option>
+          
           </select>
 
         </label>

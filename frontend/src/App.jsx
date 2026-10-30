@@ -29,6 +29,7 @@ function App() {
 
   const [selectedRoute, setSelectedRoute] = useState("normal");
 
+  const [selectedIncidentType, setSelectedIncidentType] = useState("ROAD_BLOCK");
   
 
 
@@ -332,6 +333,7 @@ function App() {
         incidents={incidents}
         selectedRoute={selectedRoute}
         onSelectRoute={setSelectedRoute}
+        selectedIncidentType={selectedIncidentType}
       />
 
         </section>
@@ -368,6 +370,7 @@ function App() {
             onIncidentAdded={
               handleIncidentAdded
             }
+            onTypeChange={setSelectedIncidentType}
           />
 
 
