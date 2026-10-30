@@ -4,6 +4,7 @@ import {
   Polyline,
   Marker,
   Popup,
+  CircleMarker,
 } from "react-leaflet";
 
 import L from "leaflet";
@@ -13,64 +14,107 @@ import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 
-
 const vehicleIcon = new L.Icon({
   iconUrl: markerIcon,
   iconRetinaUrl: markerIcon2x,
   shadowUrl: markerShadow,
-
   iconSize: [25, 41],
   iconAnchor: [12, 41],
   popupAnchor: [1, -34],
   shadowSize: [41, 41],
 });
 
-
-function MapView({ network, routes, vehicles }) {
-
-  // Debug vehicle data
-  console.log("VEHICLES:", vehicles);
-  console.log("VEHICLES TYPE:", typeof vehicles);
-  console.log("IS ARRAY:", Array.isArray(vehicles));
-
-
+function MapView({
+  network,
+  routes,
+  vehicles,
+  incidents = [],
+  selectedRoute = "normal",
+  onSelectRoute,
+}) {
   const center = [25.42, 91.79];
 
-
   // Convert GeoJSON [longitude, latitude]
-  // into Leaflet [latitude, longitude]
+  // into Leaflet [latitude, longitude].
   const convertCoordinates = (coordinates = []) => {
-
     if (!Array.isArray(coordinates)) {
       return [];
     }
 
-    return coordinates.map(([lon, lat]) => [lat, lon]);
+    return coordinates
+      .filter(
+        (point) =>
+          Array.isArray(point) &&
+          point.length >= 2 &&
+          Number.isFinite(Number(point[0])) &&
+          Number.isFinite(Number(point[1]))
+      )
+      .map(([lon, lat]) => [Number(lat), Number(lon)]);
   };
 
+  // Hardcoded route coordinates for frontend testing.
+  // Format: [latitude, longitude]
 
-  // Primary route
-  const primaryRoute = convertCoordinates(
-    routes?.normal?.coordinates
-  );
+  const testPrimaryRoute = [
+    [25.3650, 91.7350],
+    [25.3720, 91.7420],
+    [25.3800, 91.7500],
+    [25.3900, 91.7580],
+    [25.4000, 91.7680],
+    [25.4100, 91.7780],
+    [25.4200, 91.7900],
+  ];
 
+  const testSaferRoute = [
+    [25.3650, 91.7350],
+    [25.3700, 91.7480],
+    [25.3800, 91.7600],
+    [25.3920, 91.7700],
+    [25.4050, 91.7800],
+    [25.4200, 91.7900],
+  ];
+  // uncomment for real coordinates
+  // Primary route coordinates.
+  // const primaryRoute = convertCoordinates(
+  //   routes?.normal?.coordinates
+  // );
 
-  // Safer AI route
-  const saferRoute = convertCoordinates(
-    routes?.safer?.coordinates
-  );
+  // // AI safer route coordinates.
+  // const saferRoute = convertCoordinates(
+  //   routes?.safer?.coordinates
+  // );
 
+  // Use hardcoded coordinates temporarily for testing.
+// Backend fetching remains unchanged in App.jsx.
 
-  // Make sure vehicles is always an array
+const primaryRoute = testPrimaryRoute;
+const saferRoute = testSaferRoute;
+
+  // Ensure vehicles is always an array.
   const vehicleList = Array.isArray(vehicles)
     ? vehicles
     : [];
 
+  // Route styling based on selection.
+  const getRouteStyle = (routeName) => {
+    const isSelected = selectedRoute === routeName;
+
+    const color =
+      routeName === "safer" ? "#16a34a" : "#1677ff";
+
+    return {
+      isSelected,
+      color: isSelected ? color : "#9ca3af",
+      weight: isSelected ? 7 : 4,
+      opacity: isSelected ? 1 : 0.65,
+    };
+  };
+
+  const primaryStyle = getRouteStyle("normal");
+  const saferStyle = getRouteStyle("safer");
 
   return (
-
     <div className="map-container">
-
       <MapContainer
         center={center}
         zoom={10}
@@ -80,166 +124,227 @@ function MapView({ network, routes, vehicles }) {
           height: "100%",
         }}
       >
-
         <TileLayer
           attribution="&copy; OpenStreetMap contributors"
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-
-        {/* -------------------------------- */}
         {/* ROAD NETWORK */}
-        {/* -------------------------------- */}
+        {network?.features?.map((feature, index) => {
+          const coordinates = feature.geometry?.coordinates;
 
-        {network?.features?.map(
-          (feature, index) => {
-
-            const coordinates =
-              feature.geometry?.coordinates;
-
-            if (!coordinates) {
-              return null;
-            }
-
-            return (
-
-              <Polyline
-                key={`network-${index}`}
-                positions={convertCoordinates(
-                  coordinates
-                )}
-                pathOptions={{
-                  weight: 3,
-                  opacity: 0.35,
-                }}
-              />
-
-            );
+          if (
+            !coordinates ||
+            feature.geometry?.type !== "LineString"
+          ) {
+            return null;
           }
-        )}
 
+          const positions = convertCoordinates(coordinates);
 
-        {/* -------------------------------- */}
+          if (positions.length < 2) {
+            return null;
+          }
+
+          return (
+            <Polyline
+              key={`network-${index}`}
+              positions={positions}
+              pathOptions={{
+                color: "#64748b",
+                weight: 3,
+                opacity: 0.35,
+              }}
+            />
+          );
+        })}
+
         {/* PRIMARY ROUTE */}
-        {/* -------------------------------- */}
-
         {primaryRoute.length > 1 && (
+          <>
+            {/* White outline makes the route stand out. */}
+            <Polyline
+              positions={primaryRoute}
+              pathOptions={{
+                color: "#ffffff",
+                weight: primaryStyle.isSelected ? 11 : 6,
+                opacity: primaryStyle.isSelected ? 0.95 : 0.45,
+                lineCap: "round",
+                lineJoin: "round",
+              }}
+              interactive={false}
+            />
 
-          <Polyline
-            positions={primaryRoute}
-            pathOptions={{
-              weight: 7,
-              opacity: 0.9,
-            }}
-          >
+            <Polyline
+              positions={primaryRoute}
+              eventHandlers={{click: () => onSelectRoute?.("normal"),}}
+              pathOptions={{
+                color: primaryStyle.color,
+                weight: primaryStyle.weight,
+                opacity: primaryStyle.opacity,
+                lineCap: "round",
+                lineJoin: "round",
+              }}
+            >
+              <Popup>
+                <strong>
+                  {primaryStyle.isSelected
+                    ? "✓ Selected Primary Route"
+                    : "Alternative Primary Route"}
+                </strong>
 
-            <Popup>
+                <br />
 
-              <strong>
-                Primary Route
-              </strong>
+                Risk Score:{" "}
+                {routes?.normal?.risk_score ?? "N/A"}
 
-              <br />
+                <br />
 
-              Risk Score:{" "}
-              {routes?.normal?.risk_score ?? "N/A"}
-
-              <br />
-
-              Distance:{" "}
-              {routes?.normal?.distance_km ?? "N/A"} km
-
-            </Popup>
-
-          </Polyline>
-
+                Distance:{" "}
+                {routes?.normal?.distance_km ?? "N/A"} km
+              </Popup>
+            </Polyline>
+          </>
         )}
 
-
-        {/* -------------------------------- */}
         {/* AI SAFER ROUTE */}
-        {/* -------------------------------- */}
-
         {saferRoute.length > 1 && (
+          <>
+            {/* White outline beneath the safer route. */}
+            <Polyline
+              positions={saferRoute}
+              pathOptions={{
+                color: "#ffffff",
+                weight: saferStyle.isSelected ? 11 : 6,
+                opacity: saferStyle.isSelected ? 0.95 : 0.45,
+                lineCap: "round",
+                lineJoin: "round",
+              }}
+              interactive={false}
+            />
 
-          <Polyline
-            positions={saferRoute}
-            pathOptions={{
-              weight: 7,
-              opacity: 0.95,
-              dashArray: "10 8",
-            }}
-          >
+            <Polyline
+              positions={saferRoute}
+              eventHandlers={{click: () => onSelectRoute?.("safer"),}}
+              pathOptions={{
+                color: saferStyle.color,
+                weight: saferStyle.weight,
+                opacity: saferStyle.opacity,
+                lineCap: "round",
+                lineJoin: "round",
+              }}
+            >
+              <Popup>
+                <strong>
+                  {saferStyle.isSelected
+                    ? "✓ Selected AI Safer Route"
+                    : "Alternative Safer Route"}
+                </strong>
 
-            <Popup>
+                <br />
 
-              <strong>
-                AI Recommended Safer Route
-              </strong>
+                Risk Score:{" "}
+                {routes?.safer?.risk_score ?? "N/A"}
 
-              <br />
+                <br />
 
-              Risk Score:{" "}
-              {routes?.safer?.risk_score ?? "N/A"}
-
-              <br />
-
-              Distance:{" "}
-              {routes?.safer?.distance_km ?? "N/A"} km
-
-            </Popup>
-
-          </Polyline>
-
+                Distance:{" "}
+                {routes?.safer?.distance_km ?? "N/A"} km
+              </Popup>
+            </Polyline>
+          </>
         )}
 
-
-        {/* -------------------------------- */}
         {/* VEHICLES */}
-        {/* -------------------------------- */}
+        {vehicleList.map((vehicle, index) => {
+          const lat = Number(vehicle.lat);
+          const lon = Number(vehicle.lon);
 
-        {vehicleList.map((vehicle, index) => (
+          if (
+            vehicle.lat == null ||
+            vehicle.lon == null ||
+            !Number.isFinite(lat) ||
+            !Number.isFinite(lon)
+          ) {
+            return null;
+          }
 
-          <Marker
-            key={vehicle.id ?? `vehicle-${index}`}
-            position={[
-              vehicle.lat,
-              vehicle.lon,
-            ]}
-            icon={vehicleIcon}
-          >
+          return (
+            <Marker
+              key={vehicle.id ?? `vehicle-${index}`}
+              position={[lat, lon]}
+              icon={vehicleIcon}
+            >
+              <Popup>
+                <strong>
+                  {vehicle.id ?? "Unknown Vehicle"}
+                </strong>
 
-            <Popup>
+                <br />
 
-              <strong>
-                {vehicle.id ?? "Unknown Vehicle"}
-              </strong>
+                Cargo: {vehicle.cargo ?? "N/A"}
 
-              <br />
+                <br />
 
-              Cargo: {vehicle.cargo ?? "N/A"}
+                Speed: {vehicle.speed ?? "N/A"} km/h
 
-              <br />
+                <br />
 
-              Speed: {vehicle.speed ?? "N/A"} km/h
+                Status: {vehicle.status ?? "Unknown"}
+              </Popup>
+            </Marker>
+          );
+        })}
 
-              <br />
+        {/* BLOCKED ROAD INCIDENTS */}
+        {incidents
+          .filter((incident) =>
+            [
+              "ROAD_BLOCK",
+              "BLOCKED_ROAD",
+              "ROAD_BLOCKED",
+            ].includes(
+              String(incident.type ?? "").toUpperCase()
+            )
+          )
+          .filter(
+            (incident) =>
+              incident.lat != null &&
+              incident.lon != null &&
+              Number.isFinite(Number(incident.lat)) &&
+              Number.isFinite(Number(incident.lon))
+          )
+          .map((incident, index) => (
+            <CircleMarker
+              key={`blocked-${incident.id ?? index}`}
+              center={[
+                Number(incident.lat),
+                Number(incident.lon),
+              ]}
+              radius={9}
+              pathOptions={{
+                color: "#dc2626",
+                fillColor: "#ef4444",
+                fillOpacity: 0.9,
+                weight: 2,
+              }}
+            >
+              <Popup>
+                <strong>Blocked Road Alert</strong>
 
-              Status: {vehicle.status ?? "Unknown"}
+                <br />
 
-            </Popup>
+                {incident.description || "Road blockage reported"}
 
-          </Marker>
+                <br />
 
-        ))}
-
-
+                Severity: {incident.severity ?? "UNKNOWN"}
+              </Popup>
+            </CircleMarker>
+          ))}
       </MapContainer>
-
     </div>
-
   );
 }
-
 
 export default MapView;
