@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import MapView from "./components/MapView";
 import AlertPanel from "./components/AlertPanel";
 import IncidentForm from "./components/IncidentForm";
+import NotificationPanel from "./components/NotificationPanel";
 
 import "./App.css";
 
@@ -25,6 +26,10 @@ function App() {
   const [incidents, setIncidents] = useState([]);
 
   const [backendOnline, setBackendOnline] = useState(false);
+
+  const [selectedRoute, setSelectedRoute] = useState("normal");
+
+  
 
 
   async function fetchData() {
@@ -288,11 +293,46 @@ function App() {
 
         <section className="map-section">
 
-          <MapView
+          {/* <MapView
             network={network}
             routes={routes}
             vehicles={vehicles}
-          />
+          /> */}
+
+        <div className="route-selector">
+  <span className="route-label">Choose Route</span>
+
+  <button
+    className={`route-button ${selectedRoute === "normal" ? "active primary" : ""}`}
+    onClick={() => setSelectedRoute("normal")}
+  >
+    <span className="route-dot primary-dot"></span>
+    Primary Route
+  </button>
+
+  <button
+    className={`route-button ${selectedRoute === "safer" ? "active safer" : ""}`}
+    onClick={() => setSelectedRoute("safer")}
+  >
+    <span className="route-dot safer-dot"></span>
+    AI Safer Route
+  </button>
+</div>
+
+          {/* <MapView
+          network={network}
+          routes={routes}
+          vehicles={vehicles}
+          incidents={incidents}
+          /> */}
+      <MapView
+        network={network}
+        routes={routes}
+        vehicles={vehicles}
+        incidents={incidents}
+        selectedRoute={selectedRoute}
+        onSelectRoute={setSelectedRoute}
+      />
 
         </section>
 
@@ -310,6 +350,15 @@ function App() {
             risk={risk}
             weather={weather}
             routes={routes}
+          />
+
+          {/* {NotificationPanel} */}
+
+          <NotificationPanel
+          risk={risk}
+          weather={weather}
+          routes={routes}
+          incidents={incidents}
           />
 
 
