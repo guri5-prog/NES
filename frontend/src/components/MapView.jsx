@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { CircleMarker, GeoJSON, MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
+import { CircleMarker, GeoJSON, ImageOverlay, MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
@@ -30,7 +30,17 @@ function routePositions(route) {
   return (route?.coordinates ?? []).filter((point) => Array.isArray(point) && point.length >= 2 && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1]))).map(([lon, lat]) => [Number(lat), Number(lon)]);
 }
 
-function MapView({ network, routes, vehicles = [], incidents = [], selectedRoute = "normal", onSelectRoute }) {
+function escapePopup(value) {
+  return String(value ?? "Unknown").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+}
+
+function formatEventDate(value) {
+  if (value == null || value === "") return "Unknown";
+  const date = new Date(typeof value === "number" ? value : value);
+  return Number.isNaN(date.getTime()) ? escapePopup(value) : escapePopup(date.toLocaleDateString());
+}
+
+function MapView({ network, routes, vehicles = [], incidents = [], selectedRoute = "normal", onSelectRoute, landslideData, showCoolr = false, showLhasa = false }) {
   const primary = useMemo(() => routePositions(routes?.normal), [routes]);
   const safer = useMemo(() => routePositions(routes?.safer), [routes]);
   const activeRoute = selectedRoute === "safer" ? safer : primary;
@@ -40,6 +50,31 @@ function MapView({ network, routes, vehicles = [], incidents = [], selectedRoute
       <MapContainer center={[27.35, 88.61]} zoom={9} scrollWheelZoom className="leaflet-map">
         <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
         <FitNetwork network={network} routes={routes} />
+        {showLhasa && landslideData?.lhasa?.image_url && landslideData?.lhasa?.bounds && <ImageOverlay
+          url={landslideData.lhasa.image_url}
+          bounds={landslideData.lhasa.bounds}
+          opacity={0.48}
+          zIndex={350}
+          attribution="NASA GSFC LHASA"
+        />}
+        {showCoolr && landslideData?.layers?.polygons?.features?.length > 0 && <GeoJSON
+          key={`coolr-polygons-${landslideData.timestamp ?? landslideData.cache}`}
+          data={landslideData.layers.polygons}
+          style={() => ({ color: "#b91c1c", weight: 2, fillColor: "#ef4444", fillOpacity: 0.3 })}
+          onEachFeature={(feature, layer) => {
+            const properties = feature.properties ?? {};
+            layer.bindPopup(`<strong>NASA COOLR reported landslide area</strong><br/>Date: ${formatEventDate(properties.event_date)}<br/>Trigger: ${escapePopup(properties.landslide_trigger)}<br/>Source: ${escapePopup(properties.source_name)}`);
+          }}
+        />}
+        {showCoolr && landslideData?.layers?.points?.features?.length > 0 && <GeoJSON
+          key={`coolr-points-${landslideData.timestamp ?? landslideData.cache}`}
+          data={landslideData.layers.points}
+          pointToLayer={(_feature, latlng) => L.circleMarker(latlng, { radius: 6, color: "#fff", weight: 1.5, fillColor: "#dc2626", fillOpacity: 0.95 })}
+          onEachFeature={(feature, layer) => {
+            const properties = feature.properties ?? {};
+            layer.bindPopup(`<strong>NASA COOLR reported landslide</strong><br/>Date: ${formatEventDate(properties.event_date)}<br/>Trigger: ${escapePopup(properties.landslide_trigger)}<br/>Size: ${escapePopup(properties.landslide_size)}<br/>Source: ${escapePopup(properties.source_name)}`);
+          }}
+        />}
         {network?.features?.length > 0 && <GeoJSON data={network} style={() => ({ color: "#8491a5", weight: 2, opacity: 0.45 })} />}
         {primary.length > 1 && <Polyline positions={primary} eventHandlers={{ click: () => onSelectRoute?.("normal") }} pathOptions={{ color: selectedRoute === "normal" ? "#2563eb" : "#94a3b8", weight: selectedRoute === "normal" ? 7 : 4, opacity: selectedRoute === "normal" ? 0.96 : 0.58, lineCap: "round", lineJoin: "round" }}><Popup><strong>Primary route</strong><br />Distance: {routes?.normal?.distance_km ?? "—"} km{routes?.normal?.duration_minutes != null && <><br />Estimated time: {routes.normal.duration_minutes} min</>}</Popup></Polyline>}
         {safer.length > 1 && <Polyline positions={safer} eventHandlers={{ click: () => onSelectRoute?.("safer") }} pathOptions={{ color: selectedRoute === "safer" ? "#15945a" : "#86b99b", weight: selectedRoute === "safer" ? 7 : 4, opacity: selectedRoute === "safer" ? 0.96 : 0.62, dashArray: "8 7", lineCap: "round", lineJoin: "round" }}><Popup><strong>Alternative route</strong><br />Distance: {routes?.safer?.distance_km ?? "—"} km{routes?.safer?.duration_minutes != null && <><br />Estimated time: {routes.safer.duration_minutes} min</>}</Popup></Polyline>}

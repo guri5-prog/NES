@@ -6,7 +6,7 @@
 - `GET /api/weather` fetches current Open-Meteo data near Gangtok and stores only that observation in PostgreSQL. Visibility is left null because Open-Meteo is not the visibility source in this integration.
 - `GET /api/routes` uses the checked-in Sikkim OSM road export by default. Route coordinates are `[longitude, latitude]`; start and destination can be supplied as `start_lon`, `start_lat`, `destination_lon`, and `destination_lat`. Set `ROUTE_NETWORK_SOURCE=postgis` only after importing the Sikkim network with `python import_roads.py`.
 - `/api/places/search?q=...&state=...` searches submitted place names inside one of the eight Northeast state areas. `/api/routes` accepts `origin_state` and `destination_state`, allowing routes across state borders. Trips within Sikkim use the local Sikkim route graph; other trips use OSRM alternatives and query Valhalla for a distinct alternative when OSRM only returns one. `OSRM_BASE_URL` and `VALHALLA_BASE_URL` can point to project-managed routing servers. The public Nominatim geocoder is queried only on explicit searches and rate-limited to one request per second.
-- Route responses contain weather and visibility samples for the start, midpoint, and destination of both the shortest and risk-weighted path. These samples are descriptive; the route indicator currently uses corridor weather samples taken before routing.
+- Route responses contain weather, visibility, and Open-Meteo 24-hour precipitation samples for the start, midpoint, and destination. Sikkim route scores aggregate per-edge heuristic scores weighted by edge length and use incident-to-road-segment distance. External OSM routes score their geometry sections using the nearest of their three weather samples and incidents within 2 km. Neither path currently has full segment-level slope/soil/land-cover features, and neither score is a calibrated disruption probability.
 - `GET /api/network` returns the Sikkim road features inside its `west`, `south`, `east`, `north` bounds.
 - `GET /api/vehicles` returns persisted fleet records only. It no longer writes demo Shillong vehicle positions.
 - `POST /api/susceptibility/predict` accepts `{ "segment_id": "...", "features": { ... } }` with exactly the 24 model columns in `model/models/feature_schema_v3.json` and runs `random_forest_final_v3.joblib`.
@@ -30,6 +30,8 @@ Automatic segment scoring is not yet available: the checked-in road records do n
 | MOSDAC | Requires account/product configuration and a dataset-specific ingestion adapter; status is reported, no value is synthesized. |
 | GloFAS | Requires a selected Copernicus product/access path and ingestion adapter; status is reported, no value is synthesized. |
 | Mapillary | Live image metadata when `MAPILLARY_ACCESS_TOKEN` is configured; imagery is not classified as a road condition. |
+| NASA COOLR | On-demand `/api/landslides?west=...&south=...&east=...&north=...&days=7` queries recent reported points and mapped polygons for the route extent. This is a report catalog, not a guaranteed complete or real-time incident feed and not a closure source. |
+| NASA LHASA | The same on-demand endpoint returns a current ImageServer overlay URL. LHASA is shown as an independent regional hazard nowcast; it is not added to the trained model or route score. |
 
 Copy `.env.example` to `.env`, set only the keys you have, then restart the backend. Never commit `.env`. API credentials are read from the process environment.
 

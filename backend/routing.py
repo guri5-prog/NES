@@ -53,6 +53,24 @@ def haversine_distance(a: Tuple[float, float], b: Tuple[float, float]) -> float:
     return R * 2.0 * math.atan2(math.sqrt(val), math.sqrt(max(0.0, 1.0 - val)))
 
 
+def point_to_segment_distance_km(
+    point: Tuple[float, float], start: Tuple[float, float], end: Tuple[float, float]
+) -> float:
+    """Approximate distance from a lon/lat point to a short road segment in km."""
+    mean_lat = math.radians((point[1] + start[1] + end[1]) / 3.0)
+    km_per_lon = 111.320 * math.cos(mean_lat)
+    km_per_lat = 110.574
+    px, py = point[0] * km_per_lon, point[1] * km_per_lat
+    ax, ay = start[0] * km_per_lon, start[1] * km_per_lat
+    bx, by = end[0] * km_per_lon, end[1] * km_per_lat
+    dx, dy = bx - ax, by - ay
+    length_sq = dx * dx + dy * dy
+    if length_sq == 0:
+        return math.hypot(px - ax, py - ay)
+    fraction = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length_sq))
+    return math.hypot(px - (ax + fraction * dx), py - (ay + fraction * dy))
+
+
 def load_roads_dataset(db: Optional[Session] = None) -> List[Dict[str, Any]]:
     """Load Sikkim source roads; opt in to PostGIS roads after importing that same network."""
     global _LOCAL_ROADS_CACHE
@@ -120,6 +138,7 @@ def build_risk_aware_graph(
 
     # Environmental features
     rainfall_value = weather_context.get("rainfall_mm") if weather_context else None
+    rainfall_24h_value = weather_context.get("rainfall_24h_mm") if weather_context else None
     visibility_value = weather_context.get("visibility_km") if weather_context else None
     rainfall = float(rainfall_value) if rainfall_value is not None else 0.0
     visibility = float(visibility_value) if visibility_value is not None else 10.0
@@ -147,10 +166,9 @@ def build_risk_aware_graph(
             end = tuple(coordinates[i + 1])
             distance = haversine_distance(start, end)
             segment_id = f"OSM-{road.get('id')}-{i+1}"
-            midpoint = ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
             nearby_incidents = [incident for incident in (active_incidents or [])
                 if incident.get("lon") is not None and incident.get("lat") is not None
-                and haversine_distance(midpoint, (float(incident["lon"]), float(incident["lat"]))) <= 2.0]
+                and point_to_segment_distance_km((float(incident["lon"]), float(incident["lat"])), start, end) <= 2.0]
 
             # This is an uncalibrated heuristic indicator until labeled disruption
             # training data and per-road feature extraction are available.
@@ -158,6 +176,7 @@ def build_risk_aware_graph(
                 segment_id=segment_id,
                 base_risk=base_risk,
                 rainfall_mm=rainfall,
+                rainfall_24h_mm=float(rainfall_24h_value) if rainfall_24h_value is not None else None,
                 visibility_km=visibility,
                 slope_deg=0.0,
                 active_incidents=nearby_incidents,
@@ -174,10 +193,12 @@ def build_risk_aware_graph(
             edge_attributes = dict(
                 segment_id=segment_id,
                 distance=distance,
+                base_risk=base_risk,
                 risk=risk_info["score"],
                 risk_probability=p_e,
                 risk_level=risk_info["risk_level"],
                 risk_factors=risk_info["risk_factors"],
+                nearby_incident_count=len(nearby_incidents),
                 cost=cost_e,
                 road=road_name,
                 route_type=road_type,
@@ -207,8 +228,8 @@ def get_path_metrics(graph: nx.Graph, path: List[Tuple[float, float]], alpha: fl
     """Calculate aggregated route cost, distance, and segment-level risks."""
     total_distance = 0.0
     total_cost = 0.0
-    probabilities = []
-    risks = []
+    weighted_risk = 0.0
+    weighted_probability = 0.0
     all_factors = []
     segments_summary = []
 
@@ -220,23 +241,25 @@ def get_path_metrics(graph: nx.Graph, path: List[Tuple[float, float]], alpha: fl
 
         total_distance += d
         total_cost += c
-        probabilities.append(p)
-        risks.append(edge["risk"])
+        weighted_risk += edge["risk"] * d
+        weighted_probability += p * d
         all_factors.extend(edge["risk_factors"])
 
         segments_summary.append({
             "segment_id": edge["segment_id"],
             "road": edge["road"],
             "distance_km": round(d, 2),
+            "base_risk": edge.get("base_risk", 0.0),
             "risk_probability": None,
             "risk_indicator": round(edge["risk"], 2),
             "risk_level": edge["risk_level"],
             "risk_factors": edge["risk_factors"],
+            "nearby_incident_count": edge.get("nearby_incident_count", 0),
             "cost": round(c, 2),
         })
 
-    avg_p = sum(probabilities) / len(probabilities) if probabilities else 0.0
-    avg_risk = sum(risks) / len(risks) if risks else 0.0
+    avg_p = weighted_probability / total_distance if total_distance else 0.0
+    avg_risk = weighted_risk / total_distance if total_distance else 0.0
 
     if avg_p >= 0.65:
         overall_level = "HIGH"
@@ -253,7 +276,9 @@ def get_path_metrics(graph: nx.Graph, path: List[Tuple[float, float]], alpha: fl
         "risk_probability": None,
         "risk_indicator": round(avg_risk, 2),
         "risk_level": overall_level,
-        "risk_factors": list(dict.fromkeys(all_factors)),
+        "risk_factors": [factor for factor in dict.fromkeys(all_factors)
+                         if factor != "Nominal Mountain Corridor Baseline"] or
+                        (["Nominal Mountain Corridor Baseline"] if all_factors else []),
         "risk_assessment_type": "heuristic",
         "cost_parameters": {"alpha": alpha, "beta": beta},
         "segments": segments_summary,
@@ -350,7 +375,7 @@ def get_routes(
     incidents = []
     weather_ctx = weather_context or {"rainfall_mm": 0.0, "visibility_km": 10.0}
 
-    if db is not None and weather_context is None:
+    if db is not None:
         try:
             incidents_db = db.query(
                 Incident,
@@ -364,6 +389,7 @@ def get_routes(
         except Exception:
             pass
 
+    if db is not None and weather_context is None:
         try:
             latest_weather = db.query(Weather).order_by(Weather.timestamp.desc()).first()
             if latest_weather:

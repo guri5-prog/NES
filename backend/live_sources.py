@@ -4,12 +4,13 @@ import csv
 from concurrent.futures import ThreadPoolExecutor
 import io
 import logging
+import math
 import os
 import time
 import threading
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,87 @@ def _cached(key: str, loader, cache_failures: bool = True):
     if cache_failures or value.get("status") == "LIVE_CONNECTED":
         _CACHE[key] = (now, dict(value))
     return value
+
+
+NASA_COOLR_LAYERS = {
+    "points": "https://gis.earthdata.nasa.gov/portal/rest/services/Landslides/COOLR_Reports_Points/FeatureServer/0/query",
+    "polygons": "https://gis.earthdata.nasa.gov/portal/rest/services/Landslides/COOLR_Events_Polygons/FeatureServer/0/query",
+}
+NASA_LHASA_TODAY = "https://gis.earthdata.nasa.gov/portal/rest/services/Landslides/LHASA_Hazard_Today/ImageServer"
+
+
+def get_coolr_landslides(west: float, south: float, east: float, north: float, days: int = 7) -> Dict[str, Any]:
+    """Fetch recent NASA COOLR reports and mapped event polygons for a map extent."""
+    west, south, east, north = (round(float(value), 3) for value in (west, south, east, north))
+    days = max(1, min(int(days), 30))
+    cache_key = f"nasa-coolr:{west}:{south}:{east}:{north}:{days}"
+
+    def load():
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff_sql = cutoff.strftime("%Y-%m-%d %H:%M:%S")
+        bbox = f"{west},{south},{east},{north}"
+        def query_layer(layer, endpoint):
+            features = []
+            offset = 0
+            try:
+                while offset < 6000:
+                    params = urllib.parse.urlencode({
+                        "where": f"event_date >= TIMESTAMP '{cutoff_sql}'",
+                        "geometry": bbox,
+                        "geometryType": "esriGeometryEnvelope",
+                        "spatialRel": "esriSpatialRelIntersects",
+                        "inSR": "4326", "outSR": "4326", "outFields": "*",
+                        "returnGeometry": "true", "f": "geojson",
+                        "orderByFields": "event_date DESC",
+                        "resultRecordCount": 2000, "resultOffset": offset,
+                    })
+                    result = _json(endpoint + "?" + params, timeout=12.0)
+                    if not result or result.get("error"):
+                        logger.info("NASA COOLR %s query returned no usable response", layer)
+                        return layer, {"type": "FeatureCollection", "features": features}, "UNAVAILABLE"
+                    page = result.get("features") or []
+                    features.extend(page)
+                    offset += len(page)
+                    if len(page) < 2000 or result.get("exceededTransferLimit") is False:
+                        break
+                else:
+                    return layer, {"type": "FeatureCollection", "features": features}, "TRUNCATED"
+                return layer, {"type": "FeatureCollection", "features": features}, "LIVE_CONNECTED"
+            except Exception as exc:
+                logger.info("NASA COOLR %s query failed: %s", layer, exc)
+                return layer, {"type": "FeatureCollection", "features": features}, "UNAVAILABLE"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda item: query_layer(*item), NASA_COOLR_LAYERS.items()))
+        collections = {layer: collection for layer, collection, _ in results}
+        statuses = {layer: status for layer, _, status in results}
+
+        connected = any(status in {"LIVE_CONNECTED", "TRUNCATED"} for status in statuses.values())
+        return {
+            "status": "LIVE_CONNECTED" if connected else "UNAVAILABLE",
+            "layers": collections,
+            "layer_status": statuses,
+            "days": days,
+            "bbox": [west, south, east, north],
+            "source": "NASA COOLR (reported events; not a road-closure feed)",
+        }
+
+    return _cached(cache_key, load, cache_failures=False)
+
+
+def lhasa_image_url(west: float, south: float, east: float, north: float) -> str:
+    """Build an ArcGIS ImageServer export URL for the current LHASA hazard layer."""
+    # Approximate the geographic bbox aspect ratio in the requested raster.
+    center_lat = (south + north) / 2
+    width = max(1.0, min(2048.0, 1024 * abs((east - west) * max(0.15, abs(math.cos(math.radians(center_lat)))) / max(north - south, 0.01))))
+    params = urllib.parse.urlencode({
+        "bbox": f"{west},{south},{east},{north}", "bboxSR": "4326", "imageSR": "4326",
+        "size": f"{int(width)},{1024}", "format": "png32", "f": "image",
+        # LHASA uses zero for cells with no current hazard. Exporting those as
+        # NoData keeps the regional raster transparent over the basemap.
+        "noData": "0", "noDataInterpretation": "esriNoDataMatchAny",
+    })
+    return f"{NASA_LHASA_TODAY}/exportImage?{params}"
 
 
 def bbox_for_point(lat: float, lon: float, radius_degrees: float = 0.25) -> List[float]:
@@ -314,6 +396,8 @@ def get_route_weather_conditions(coordinates: List[List[float]]) -> Dict[str, An
             results.append({**point,
                 "status": "LIVE_CONNECTED" if meteo.get("status") == "LIVE_CONNECTED" else meteo.get("status"),
                 "rainfall_mm": meteo.get("rainfall_mm"), "temperature_c": meteo.get("temperature_c"),
+                "rainfall_24h_mm": meteo.get("rainfall_24h_mm"),
+                "rainfall_72h_mm": meteo.get("rainfall_72h_mm"),
                 "humidity": meteo.get("humidity"), "wind_speed_kmh": meteo.get("wind_speed_kmh"),
                 "visibility_km": weather.get("visibility_km") if weather.get("visibility_km") is not None else meteo.get("visibility_km"),
                 "visibility_status": weather.get("status") if weather.get("visibility_km") is not None else meteo.get("status"),
@@ -321,6 +405,8 @@ def get_route_weather_conditions(coordinates: List[List[float]]) -> Dict[str, An
     connected = any(point["status"] == "LIVE_CONNECTED" for point in results)
     return {"status": "LIVE_CONNECTED" if connected else "UNAVAILABLE", "points": results,
             "summary": {"maximum_rainfall_mm": max((p["rainfall_mm"] for p in results if p["rainfall_mm"] is not None), default=None),
+                        "maximum_rainfall_24h_mm": max((p["rainfall_24h_mm"] for p in results if p["rainfall_24h_mm"] is not None), default=None),
+                        "maximum_rainfall_72h_mm": max((p["rainfall_72h_mm"] for p in results if p["rainfall_72h_mm"] is not None), default=None),
                         "minimum_visibility_km": min((p["visibility_km"] for p in results if p["visibility_km"] is not None), default=None)}}
 
 
@@ -329,7 +415,7 @@ def get_live_rainfall_openmeteo(lat: float, lon: float) -> Dict[str, Any]:
     def load():
         params = urllib.parse.urlencode({"latitude": lat, "longitude": lon,
             "current": "temperature_2m,relative_humidity_2m,precipitation,rain,weather_code,wind_speed_10m",
-            "hourly": "visibility", "forecast_days": 1})
+            "hourly": "precipitation,visibility", "past_hours": 72, "forecast_hours": 1})
         data = _json("https://api.open-meteo.com/v1/forecast?" + params, timeout=3.0)
         if not data or "current" not in data:
             return {"source":"Open-Meteo", "status":"UNAVAILABLE", "lat":lat,"lon":lon,"rainfall_mm":None}
@@ -337,6 +423,20 @@ def get_live_rainfall_openmeteo(lat: float, lon: float) -> Dict[str, Any]:
         hourly = data.get("hourly", {})
         visibility_km = None
         current_hour = str(c.get("time", ""))[:13]
+        rainfall_24h_mm = None
+        rainfall_72h_mm = None
+        try:
+            current_dt = datetime.fromisoformat(str(c.get("time", "")))
+            recent_rain = []
+            for hour, value in zip(hourly.get("time", []), hourly.get("precipitation", [])):
+                hour_dt = datetime.fromisoformat(str(hour))
+                if value is not None and current_dt - timedelta(hours=72) < hour_dt <= current_dt:
+                    recent_rain.append((hour_dt, float(value)))
+            rainfall_24h_mm = round(sum(value for hour_dt, value in recent_rain
+                                        if hour_dt > current_dt - timedelta(hours=24)), 1)
+            rainfall_72h_mm = round(sum(value for _, value in recent_rain), 1)
+        except (TypeError, ValueError):
+            pass
         for index, hour in enumerate(hourly.get("time", [])):
             if str(hour)[:13] == current_hour and index < len(hourly.get("visibility", [])):
                 value = hourly["visibility"][index]
@@ -344,6 +444,7 @@ def get_live_rainfall_openmeteo(lat: float, lon: float) -> Dict[str, Any]:
                 break
         return {"source":"Open-Meteo", "status":"LIVE_CONNECTED", "lat":lat,"lon":lon,
             "rainfall_mm":c.get("precipitation"), "rain_mm":c.get("rain"),
+            "rainfall_24h_mm":rainfall_24h_mm, "rainfall_72h_mm":rainfall_72h_mm,
             "temperature_c":c.get("temperature_2m"), "humidity":c.get("relative_humidity_2m"),
             "wind_speed_kmh":c.get("wind_speed_10m"), "weather_code":c.get("weather_code"),
             "visibility_km":visibility_km,"visibility_source":"Open-Meteo hourly forecast" if visibility_km is not None else None,
@@ -374,7 +475,7 @@ def get_live_nasa_eonet_events(bbox: List[float], days: int = 30) -> Dict[str, A
     def load():
         params = urllib.parse.urlencode({"category":"severeStorms,landslides,floods","days":days,"status":"open",
                                          "bbox":f"{west},{south},{east},{north}"})
-        data = _json("https://eonet.gsfc.nasa.gov/api/v3/events?" + params)
+        data = _json("https://eonet.gsfc.nasa.gov/api/v3/events?" + params, timeout=6.0)
         if data is None:
             return {"source":"NASA EONET v3", "status":"UNAVAILABLE", "events":[], "total_active_events":None,"bbox":bbox}
         events=[]
@@ -397,7 +498,7 @@ def get_live_nasa_firms_alerts(bbox: List[float]) -> Dict[str, Any]:
     key=f"firms:{','.join(f'{n:.3f}' for n in bbox)}"
     def load():
         url=f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/{urllib.parse.quote(token)}/VIIRS_SNPP_NRT/{west},{south},{east},{north}/2"
-        body=_fetch(url)
+        body=_fetch(url, timeout=5.0)
         if body is None:
             return {"source":"NASA FIRMS", "status":"UNAVAILABLE", "active_thermal_anomalies":None,"bbox":bbox}
         try:
@@ -421,12 +522,12 @@ def get_live_osm_road_status(bbox: List[float]) -> Dict[str, Any]:
     west,south,east,north=bbox
     key=f"osm:{','.join(f'{n:.3f}' for n in bbox)}"
     def load():
-        query=f"[out:json][timeout:20];(way[highway]({south},{west},{north},{east}););out geom;"
+        query=f"[out:json][timeout:7];(way[highway]({south},{west},{north},{east}););out geom;"
         # Overpass QL is POSTed to avoid URL length limits.
         try:
             req=urllib.request.Request("https://overpass-api.de/api/interpreter",data=urllib.parse.urlencode({"data":query}).encode(),
                 headers={"User-Agent":USER_AGENT,"Content-Type":"application/x-www-form-urlencoded"})
-            with urllib.request.urlopen(req,timeout=25) as response:
+            with urllib.request.urlopen(req,timeout=8) as response:
                 import json
                 data=json.loads(response.read().decode()) if response.status==200 else None
         except Exception as exc:
@@ -465,7 +566,7 @@ def get_live_mapillary_road_condition(bbox: List[float]) -> Dict[str, Any]:
     key=f"mapillary:{','.join(f'{n:.3f}' for n in bbox)}"
     def load():
         params=urllib.parse.urlencode({"fields":"id,captured_at,geometry,compass_angle","bbox":','.join(map(str,bbox)),"limit":100,"access_token":token})
-        data=_json("https://graph.mapillary.com/images?"+params)
+        data=_json("https://graph.mapillary.com/images?"+params, timeout=5.0)
         if data is None:
             return {"source":"Mapillary", "status":"UNAVAILABLE", "image_count":None,"bbox":bbox}
         images=data.get("data",[])
@@ -501,7 +602,9 @@ def get_unified_live_data(lat: float, lon: float, bbox: Optional[List[float]]=No
     meteo=feeds["open_meteo"]
     weather=feeds["open_weather"]
     return {"timestamp":_now(),"query_location":{"lat":lat,"lon":lon},"bbox":bbox,
-        "environmental_summary":{"rainfall_mm":meteo.get("rainfall_mm"),"visibility_km":weather.get("visibility_km"),
+        "environmental_summary":{"rainfall_mm":meteo.get("rainfall_mm"),
+            "rainfall_24h_mm":meteo.get("rainfall_24h_mm"),
+            "rainfall_72h_mm":meteo.get("rainfall_72h_mm"),"visibility_km":weather.get("visibility_km"),
             "temperature_c":meteo.get("temperature_c"),"humidity":meteo.get("humidity"),
             "active_disaster_events":feeds["nasa_eonet"].get("total_active_events")},
         "sources":feeds}

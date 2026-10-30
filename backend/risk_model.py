@@ -83,6 +83,7 @@ def calculate_segment_risk(
     segment_id: str,
     base_risk: float = 0.0,
     rainfall_mm: float = 0.0,
+    rainfall_24h_mm: Optional[float] = None,
     visibility_km: float = 10.0,
     slope_deg: float = 0.0,
     traffic_density: float = 0.0,
@@ -106,12 +107,20 @@ def calculate_segment_risk(
     p_base = min(max(base_risk / 100.0 if base_risk > 1.0 else base_risk, 0.0), 1.0)
 
     # 2. Factor in Environmental Metrics
-    # Rainfall component (0-100 mm scale)
-    p_rain = min(rainfall_mm / 100.0, 1.0)
-    if rainfall_mm >= 45.0:
-        risk_factors.append(f"Heavy Monsoon Precipitation ({rainfall_mm:.1f} mm)")
+    # Combine the current preceding-hour amount with the available 24-hour
+    # accumulation. This remains a heuristic until thresholds are validated
+    # against observed local closures.
+    rainfall_24h = max(0.0, float(rainfall_24h_mm or 0.0))
+    effective_rainfall = max(float(rainfall_mm or 0.0), rainfall_24h)
+    p_rain = min(effective_rainfall / 100.0, 1.0)
+    if rainfall_24h >= 45.0:
+        risk_factors.append(f"Heavy 24-hour Rainfall ({rainfall_24h:.1f} mm)")
+    elif rainfall_24h >= 25.0:
+        risk_factors.append(f"Moderate 24-hour Rainfall ({rainfall_24h:.1f} mm)")
+    elif rainfall_mm >= 45.0:
+        risk_factors.append(f"Heavy Hourly Precipitation ({rainfall_mm:.1f} mm)")
     elif rainfall_mm >= 25.0:
-        risk_factors.append(f"Moderate Rainfall ({rainfall_mm:.1f} mm)")
+        risk_factors.append(f"Moderate Hourly Rainfall ({rainfall_mm:.1f} mm)")
 
     # Visibility component (fog / mist)
     p_vis = max(0.0, min((5.0 - visibility_km) / 5.0, 1.0))

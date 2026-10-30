@@ -22,7 +22,7 @@ from models import Road, Incident, Vehicle, Weather, User, UserSession
 from geoalchemy2 import WKTElement
 
 from risk_model import predict_risk, calculate_segment_risk
-from routing import get_routes, load_roads_dataset, haversine_distance
+from routing import get_routes, load_roads_dataset, haversine_distance, point_to_segment_distance_km
 from live_sources import (
     get_unified_live_data,
     get_live_rainfall_openmeteo,
@@ -33,6 +33,8 @@ from live_sources import (
     get_live_osm_route_roads,
     get_osrm_routes,
     get_route_weather_conditions,
+    get_coolr_landslides,
+    lhasa_image_url,
 )
 
 
@@ -584,36 +586,77 @@ def routes(
             func.ST_X(Incident.geom).label("lon"),
         ).all()
         incident_points = [
-            {"severity": incident.severity, "type": incident.type, "lat": lat, "lon": lon}
+            {"id": incident.incident_code or incident.id, "severity": incident.severity,
+             "type": incident.type, "lat": lat, "lon": lon}
             for incident, lat, lon in incident_records if lat is not None and lon is not None
         ]
 
         def assess_external_route(route, conditions):
             coordinates = route.get("coordinates", [])
-            sampled = coordinates[::max(1, len(coordinates) // 100)]
-            nearby_incidents = [incident for incident in incident_points if sampled and
-                min(haversine_distance((float(point[0]), float(point[1])),
-                                       (float(incident["lon"]), float(incident["lat"])))
-                    for point in sampled) <= 2.0]
-            summary = conditions.get("summary", {})
-            rainfall = summary.get("maximum_rainfall_mm")
-            visibility = summary.get("minimum_visibility_km")
-            has_weather_observation = rainfall is not None or visibility is not None
-            if not has_weather_observation and not nearby_incidents:
+            weather_points = [point for point in conditions.get("points", [])
+                              if point.get("rainfall_mm") is not None or point.get("rainfall_24h_mm") is not None
+                              or point.get("visibility_km") is not None]
+            has_weather_observation = bool(weather_points)
+            segment_results = []
+            seen_incidents = set()
+            all_factors = []
+            total_length = 0.0
+            weighted_score = 0.0
+
+            for index, (start_point, end_point) in enumerate(zip(coordinates[:-1], coordinates[1:]), start=1):
+                start_xy = (float(start_point[0]), float(start_point[1]))
+                end_xy = (float(end_point[0]), float(end_point[1]))
+                segment_length = haversine_distance(start_xy, end_xy)
+                if segment_length <= 0:
+                    continue
+                midpoint = ((start_xy[0] + end_xy[0]) / 2.0, (start_xy[1] + end_xy[1]) / 2.0)
+                local_incidents = [incident for incident in incident_points
+                    if point_to_segment_distance_km(
+                        (float(incident["lon"]), float(incident["lat"])), start_xy, end_xy) <= 2.0]
+                if weather_points:
+                    weather_point = min(weather_points, key=lambda point: haversine_distance(
+                        midpoint, (float(point["lon"]), float(point["lat"]))))
+                    rainfall = weather_point.get("rainfall_mm")
+                    rainfall_24h = weather_point.get("rainfall_24h_mm")
+                    visibility = weather_point.get("visibility_km")
+                else:
+                    rainfall, rainfall_24h, visibility = None, None, None
+                assessment = calculate_segment_risk(
+                    segment_id=f"route-segment-{index}", base_risk=0.0,
+                    rainfall_mm=float(rainfall or 0.0),
+                    rainfall_24h_mm=rainfall_24h,
+                    visibility_km=float(visibility if visibility is not None else 10.0),
+                    slope_deg=0.0, active_incidents=local_incidents)
+                score = float(assessment["score"])
+                total_length += segment_length
+                weighted_score += score * segment_length
+                all_factors.extend(assessment["risk_factors"])
+                seen_incidents.update(incident["id"] for incident in local_incidents)
+                segment_results.append({
+                    "segment_id": assessment["segment_id"],
+                    "distance_km": round(segment_length, 2),
+                    "risk_indicator": score,
+                    "risk_level": assessment["risk_level"],
+                    "risk_factors": assessment["risk_factors"],
+                    "nearby_incident_count": len(local_incidents),
+                })
+
+            if not total_length or (not has_weather_observation and not seen_incidents):
                 route.update({"risk_score": None, "risk_probability": None, "risk_indicator": None,
                     "risk_level": "UNKNOWN", "risk_factors": [], "risk_assessment_type": "heuristic",
                     "risk_data_status": "INSUFFICIENT_DATA"})
                 return
-            assessment = calculate_segment_risk(
-                segment_id="external-route", base_risk=0.0,
-                rainfall_mm=float(rainfall or 0.0),
-                visibility_km=float(visibility if visibility is not None else 10.0),
-                slope_deg=0.0, active_incidents=nearby_incidents)
-            route.update({"risk_score": assessment["score"], "risk_probability": None,
-                "risk_indicator": assessment["score"], "risk_level": assessment["risk_level"],
-                "risk_factors": assessment["risk_factors"], "risk_assessment_type": "heuristic",
+
+            route_score = round(weighted_score / total_length, 2)
+            risk_level = "HIGH" if route_score >= 65 else "MEDIUM" if route_score >= 35 else "LOW"
+            factors = [factor for factor in dict.fromkeys(all_factors)
+                       if factor != "Nominal Mountain Corridor Baseline"] or ["Nominal Mountain Corridor Baseline"]
+            segment_results.sort(key=lambda item: item["risk_indicator"], reverse=True)
+            route.update({"risk_score": route_score, "risk_probability": None,
+                "risk_indicator": route_score, "risk_level": risk_level,
+                "risk_factors": factors, "risk_assessment_type": "heuristic",
                 "risk_data_status": "LIVE_DATA" if has_weather_observation else "INCIDENTS_ONLY",
-                "nearby_incident_count": len(nearby_incidents)})
+                "nearby_incident_count": len(seen_incidents), "segments": segment_results[:5]})
 
         assess_external_route(primary, route_weather["normal"])
         if len(options) > 1:
@@ -638,6 +681,7 @@ def routes(
     corridor_summary = corridor_conditions.get("summary", {})
     route_weather_context = {
         "rainfall_mm": corridor_summary.get("maximum_rainfall_mm") or 0.0,
+        "rainfall_24h_mm": corridor_summary.get("maximum_rainfall_24h_mm"),
         "visibility_km": corridor_summary.get("minimum_visibility_km")
             if corridor_summary.get("minimum_visibility_km") is not None else 10.0,
     }
@@ -650,6 +694,69 @@ def routes(
             "safer": pool.submit(get_route_weather_conditions, (result.get("safer") or {}).get("coordinates", [])),
         }
         result["route_conditions"] = {key: job.result() for key, job in weather_jobs.items()}
+
+    # Re-score each selected Sikkim path with its own route weather samples and
+    # incident-to-road proximity instead of reusing the straight-corridor max.
+    incident_records = db.query(
+        Incident,
+        func.ST_Y(Incident.geom).label("lat"),
+        func.ST_X(Incident.geom).label("lon"),
+    ).filter(Incident.geom.isnot(None)).all()
+    incident_points = [
+        {"id": incident.incident_code or incident.id, "severity": incident.severity,
+         "type": incident.type, "lat": lat, "lon": lon}
+        for incident, lat, lon in incident_records if lat is not None and lon is not None
+        and 87.0 <= lon <= 90.0 and 26.0 <= lat <= 29.0
+    ]
+    for route_key in ("normal", "safer"):
+        route = result.get(route_key) or {}
+        coordinates = route.get("coordinates", [])
+        conditions = result["route_conditions"].get(route_key, {})
+        weather_points = [point for point in conditions.get("points", [])
+                          if point.get("rainfall_mm") is not None or point.get("rainfall_24h_mm") is not None
+                          or point.get("visibility_km") is not None]
+        segments = route.get("segments", [])
+        total_length = weighted_score = 0.0
+        all_factors = []
+        seen_incidents = set()
+        for index, (start_point, end_point) in enumerate(zip(coordinates[:-1], coordinates[1:])):
+            if index >= len(segments):
+                break
+            start_xy, end_xy = tuple(start_point), tuple(end_point)
+            segment = segments[index]
+            local_incidents = [incident for incident in incident_points
+                if point_to_segment_distance_km(
+                    (float(incident["lon"]), float(incident["lat"])), start_xy, end_xy) <= 2.0]
+            midpoint = ((start_xy[0] + end_xy[0]) / 2.0, (start_xy[1] + end_xy[1]) / 2.0)
+            weather_point = min(weather_points, key=lambda point: haversine_distance(
+                midpoint, (float(point["lon"]), float(point["lat"])))) if weather_points else {}
+            assessment = calculate_segment_risk(
+                segment_id=segment["segment_id"], base_risk=float(segment.get("base_risk") or 0.0),
+                rainfall_mm=float(weather_point.get("rainfall_mm") or 0.0),
+                rainfall_24h_mm=weather_point.get("rainfall_24h_mm"),
+                visibility_km=float(weather_point.get("visibility_km")
+                                    if weather_point.get("visibility_km") is not None else 10.0),
+                slope_deg=0.0, active_incidents=local_incidents)
+            segment_length = float(segment.get("distance_km") or 0.0)
+            segment["risk_indicator"] = assessment["score"]
+            segment["risk_level"] = assessment["risk_level"]
+            segment["risk_factors"] = assessment["risk_factors"]
+            segment["nearby_incident_count"] = len(local_incidents)
+            segment["risk_probability"] = None
+            total_length += segment_length
+            weighted_score += assessment["score"] * segment_length
+            all_factors.extend(assessment["risk_factors"])
+            seen_incidents.update(incident["id"] for incident in local_incidents)
+        if total_length:
+            route_score = round(weighted_score / total_length, 2)
+            route["risk_score"] = route["risk_indicator"] = route_score
+            route["risk_probability"] = None
+            route["risk_level"] = "HIGH" if route_score >= 65 else "MEDIUM" if route_score >= 35 else "LOW"
+            route["risk_factors"] = [factor for factor in dict.fromkeys(all_factors)
+                                     if factor != "Nominal Mountain Corridor Baseline"] or ["Nominal Mountain Corridor Baseline"]
+            route["risk_assessment_type"] = "heuristic"
+            route["risk_data_status"] = "LIVE_DATA" if weather_points else ("INCIDENTS_ONLY" if seen_incidents else "STATIC_BASELINE")
+            route["nearby_incident_count"] = len(seen_incidents)
     result["route_weather_context_used"] = route_weather_context
     result["has_alternative"] = bool(result.get("safer", {}).get("coordinates") and
                                      result.get("safer", {}).get("coordinates") != result.get("normal", {}).get("coordinates"))
@@ -668,6 +775,32 @@ def place_search(
         return search_places(q, state)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/landslides")
+def landslide_layers(
+    west: float,
+    south: float,
+    east: float,
+    north: float,
+    days: int = 7,
+    _user: User = Depends(authenticated_user),
+):
+    """On-demand NASA COOLR events plus an independently toggleable LHASA nowcast."""
+    if not (-180 <= west < east <= 180 and -90 <= south < north <= 90):
+        raise HTTPException(status_code=422, detail="Invalid map bounds for landslide query.")
+    if not 1 <= days <= 30:
+        raise HTTPException(status_code=422, detail="History duration must be between 1 and 30 days.")
+    if east - west > 15 or north - south > 12:
+        raise HTTPException(status_code=422, detail="Zoom in to a route or smaller area before loading landslides.")
+    result = get_coolr_landslides(west, south, east, north, days)
+    result["lhasa"] = {
+        "status": "AVAILABLE",
+        "image_url": lhasa_image_url(west, south, east, north),
+        "bounds": [[south, west], [north, east]],
+        "source": "NASA LHASA current hazard nowcast (roughly 1 km; updates several times daily)",
+    }
+    return result
 
 
 @app.get("/api/risk/segments")
