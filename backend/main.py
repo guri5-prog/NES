@@ -3,6 +3,7 @@ import logging
 import hashlib
 import os
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import uuid4
@@ -21,12 +22,17 @@ from models import Road, Incident, Vehicle, Weather, User, UserSession
 from geoalchemy2 import WKTElement
 
 from risk_model import predict_risk, calculate_segment_risk
-from routing import get_routes, load_roads_dataset
+from routing import get_routes, load_roads_dataset, haversine_distance
 from live_sources import (
     get_unified_live_data,
     get_live_rainfall_openmeteo,
     get_live_weather_openweather,
     bbox_for_point,
+    NE_STATE_BOUNDS,
+    search_places,
+    get_live_osm_route_roads,
+    get_osrm_routes,
+    get_route_weather_conditions,
 )
 
 
@@ -523,6 +529,9 @@ def routes(
     start_lat: float = 27.3389,
     destination_lon: float = 88.3639,
     destination_lat: float = 27.1667,
+    state: str = "Sikkim",
+    origin_state: Optional[str] = None,
+    destination_state: Optional[str] = None,
     db: Session = Depends(get_db),
     _user: User = Depends(authenticated_user),
 ):
@@ -533,12 +542,132 @@ def routes(
         - alpha: Weight assigned to distance D(e) in km (default: 1.0)
         - beta: Weight assigned to normalized heuristic indicator R(e) in [0, 1] (default: 25.0)
     """
+    origin_state = origin_state or state
+    destination_state = destination_state or state
+    if origin_state not in NE_STATE_BOUNDS or destination_state not in NE_STATE_BOUNDS:
+        raise HTTPException(status_code=422, detail="Choose a Northeast state from the supported list.")
     if not (-180 <= start_lon <= 180 and -90 <= start_lat <= 90 and
             -180 <= destination_lon <= 180 and -90 <= destination_lat <= 90):
         raise HTTPException(status_code=422, detail="Route coordinates are outside valid latitude/longitude ranges.")
-    return get_routes(db, alpha=alpha, beta=beta,
-                      start=[start_lon, start_lat],
-                      destination=[destination_lon, destination_lat])
+    origin_west, origin_south, origin_east, origin_north = NE_STATE_BOUNDS[origin_state]
+    destination_west, destination_south, destination_east, destination_north = NE_STATE_BOUNDS[destination_state]
+    if not (origin_west <= start_lon <= origin_east and origin_south <= start_lat <= origin_north):
+        raise HTTPException(status_code=422, detail=f"The start location must be inside {origin_state}.")
+    if not (destination_west <= destination_lon <= destination_east and
+            destination_south <= destination_lat <= destination_north):
+        raise HTTPException(status_code=422, detail=f"The destination must be inside {destination_state}.")
+
+    margin = 0.12
+    network_bbox = [min(start_lon, destination_lon)-margin, min(start_lat, destination_lat)-margin,
+                    max(start_lon, destination_lon)+margin, max(start_lat, destination_lat)+margin]
+    network_source = "checked-in Sikkim OSM road export"
+    if origin_state != "Sikkim" or destination_state != "Sikkim":
+        road_routes = get_osrm_routes([start_lon,start_lat],[destination_lon,destination_lat])
+        if road_routes.get("status") != "LIVE_CONNECTED" or not road_routes.get("routes"):
+            raise HTTPException(status_code=503, detail={"message":"The route service is temporarily unavailable. Try again shortly.",
+                "source_status":road_routes.get("status")})
+        options = road_routes["routes"]
+        primary = options[0]
+        alternate = options[1] if len(options) > 1 else {**primary, "coordinates": [], "distance_km": None, "duration_minutes": None}
+        primary["route_type"] = "primary"
+        alternate["route_type"] = "alternative"
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            weather_jobs = {
+                "normal": pool.submit(get_route_weather_conditions, primary["coordinates"]),
+                "safer": pool.submit(get_route_weather_conditions, alternate["coordinates"]),
+            }
+            route_weather = {key: job.result() for key, job in weather_jobs.items()}
+
+        incident_records = db.query(
+            Incident,
+            func.ST_Y(Incident.geom).label("lat"),
+            func.ST_X(Incident.geom).label("lon"),
+        ).all()
+        incident_points = [
+            {"severity": incident.severity, "type": incident.type, "lat": lat, "lon": lon}
+            for incident, lat, lon in incident_records if lat is not None and lon is not None
+        ]
+
+        def assess_external_route(route, conditions):
+            coordinates = route.get("coordinates", [])
+            sampled = coordinates[::max(1, len(coordinates) // 100)]
+            nearby_incidents = [incident for incident in incident_points if sampled and
+                min(haversine_distance((float(point[0]), float(point[1])),
+                                       (float(incident["lon"]), float(incident["lat"])))
+                    for point in sampled) <= 2.0]
+            summary = conditions.get("summary", {})
+            rainfall = summary.get("maximum_rainfall_mm")
+            visibility = summary.get("minimum_visibility_km")
+            has_weather_observation = rainfall is not None or visibility is not None
+            if not has_weather_observation and not nearby_incidents:
+                route.update({"risk_score": None, "risk_probability": None, "risk_indicator": None,
+                    "risk_level": "UNKNOWN", "risk_factors": [], "risk_assessment_type": "heuristic",
+                    "risk_data_status": "INSUFFICIENT_DATA"})
+                return
+            assessment = calculate_segment_risk(
+                segment_id="external-route", base_risk=0.0,
+                rainfall_mm=float(rainfall or 0.0),
+                visibility_km=float(visibility if visibility is not None else 10.0),
+                slope_deg=0.0, active_incidents=nearby_incidents)
+            route.update({"risk_score": assessment["score"], "risk_probability": None,
+                "risk_indicator": assessment["score"], "risk_level": assessment["risk_level"],
+                "risk_factors": assessment["risk_factors"], "risk_assessment_type": "heuristic",
+                "risk_data_status": "LIVE_DATA" if has_weather_observation else "INCIDENTS_ONLY",
+                "nearby_incident_count": len(nearby_incidents)})
+
+        assess_external_route(primary, route_weather["normal"])
+        if len(options) > 1:
+            assess_external_route(alternate, route_weather["safer"])
+        lines = [route["coordinates"] for route in options]
+        return {
+            "normal": primary,
+            "safer": alternate,
+            "has_alternative": len(options) > 1,
+            "route_conditions": route_weather,
+            "area": {"state":f"{origin_state} → {destination_state}","network_source":road_routes.get("provider", "OpenStreetMap directions"),"bbox":network_bbox},
+            "network": {"type":"FeatureCollection","features":[
+                {"type":"Feature","properties":{"name":"Route option","route_index":index},
+                 "geometry":{"type":"LineString","coordinates":coordinates}}
+                for index,coordinates in enumerate(lines)]},
+        }
+
+    corridor_coordinates = [[start_lon, start_lat],
+        [(start_lon + destination_lon) / 2, (start_lat + destination_lat) / 2],
+        [destination_lon, destination_lat]]
+    corridor_conditions = get_route_weather_conditions(corridor_coordinates)
+    corridor_summary = corridor_conditions.get("summary", {})
+    route_weather_context = {
+        "rainfall_mm": corridor_summary.get("maximum_rainfall_mm") or 0.0,
+        "visibility_km": corridor_summary.get("minimum_visibility_km")
+            if corridor_summary.get("minimum_visibility_km") is not None else 10.0,
+    }
+    result = get_routes(db, alpha=alpha, beta=beta,
+                        start=[start_lon, start_lat], destination=[destination_lon, destination_lat],
+                        weather_context=route_weather_context)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        weather_jobs = {
+            "normal": pool.submit(get_route_weather_conditions, (result.get("normal") or {}).get("coordinates", [])),
+            "safer": pool.submit(get_route_weather_conditions, (result.get("safer") or {}).get("coordinates", [])),
+        }
+        result["route_conditions"] = {key: job.result() for key, job in weather_jobs.items()}
+    result["route_weather_context_used"] = route_weather_context
+    result["has_alternative"] = bool(result.get("safer", {}).get("coordinates") and
+                                     result.get("safer", {}).get("coordinates") != result.get("normal", {}).get("coordinates"))
+    result["area"] = {"state":f"{origin_state} → {destination_state}","network_source":network_source,"bbox":network_bbox}
+    return result
+
+
+@app.get("/api/places/search")
+def place_search(
+    q: str,
+    state: str,
+    _user: User = Depends(authenticated_user),
+):
+    """Explicit place search bounded to a selected Northeast state."""
+    try:
+        return search_places(q, state)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/risk/segments")
@@ -656,14 +785,24 @@ def susceptibility_predict(
 
 @app.get("/api/network")
 def network(
+    state: str = "Sikkim",
     west: float = 88.20,
     south: float = 27.00,
     east: float = 88.90,
     north: float = 27.65,
     _user: User = Depends(authenticated_user),
 ):
+    if state not in NE_STATE_BOUNDS:
+        raise HTTPException(status_code=422, detail="Choose a Northeast state from the supported list.")
     if not (-180 <= west < east <= 180 and -90 <= south < north <= 90):
         raise HTTPException(status_code=422, detail="Invalid network bounding box.")
+    if state != "Sikkim":
+        data = get_live_osm_route_roads([west, south, east, north])
+        if data.get("status") != "LIVE_CONNECTED":
+            raise HTTPException(status_code=503, detail="Live OpenStreetMap road network is unavailable for this area.")
+        return {"type":"FeatureCollection", "features":[{"type":"Feature", "properties":{
+            "name":road.get("name"),"route_type":road.get("route_type"),"osm_id":road.get("id")},
+            "geometry":road.get("geometry")} for road in data.get("roads",[])]}
     features = []
     for road in load_roads_dataset():
         try:

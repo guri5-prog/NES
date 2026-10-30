@@ -109,13 +109,14 @@ def build_risk_aware_graph(
     beta: float = 25.0,
     active_incidents: Optional[List[Dict[str, Any]]] = None,
     weather_context: Optional[Dict[str, Any]] = None,
+    roads_override: Optional[List[Dict[str, Any]]] = None,
 ) -> nx.Graph:
     """
     Build a NetworkX road graph from PostGIS road geometries (or local GeoJSON fallback).
     Evaluates a heuristic indicator and edge cost: C(e) = alpha * D(e) + beta * R(e).
     """
     graph = nx.DiGraph()
-    roads = load_roads_dataset(db)
+    roads = roads_override if roads_override is not None else load_roads_dataset(db)
 
     # Environmental features
     rainfall_value = weather_context.get("rainfall_mm") if weather_context else None
@@ -253,6 +254,7 @@ def get_path_metrics(graph: nx.Graph, path: List[Tuple[float, float]], alpha: fl
         "risk_indicator": round(avg_risk, 2),
         "risk_level": overall_level,
         "risk_factors": list(dict.fromkeys(all_factors)),
+        "risk_assessment_type": "heuristic",
         "cost_parameters": {"alpha": alpha, "beta": beta},
         "segments": segments_summary,
     }
@@ -266,17 +268,15 @@ def calculate_cost_optimized_route(
     beta: float = 25.0,
     active_incidents: Optional[List[Dict[str, Any]]] = None,
     weather_context: Optional[Dict[str, Any]] = None,
+    roads_override: Optional[List[Dict[str, Any]]] = None,
+    graph_override: Optional[nx.Graph] = None,
 ) -> Dict[str, Any]:
     """
     Computes route with minimum total cost: C(P) = sum [alpha * D(e) + beta * R(e)].
     """
-    graph = build_risk_aware_graph(
-        db=db,
-        alpha=alpha,
-        beta=beta,
-        active_incidents=active_incidents,
-        weather_context=weather_context,
-    )
+    graph = graph_override if graph_override is not None else build_risk_aware_graph(
+        db=db, alpha=alpha, beta=beta, active_incidents=active_incidents,
+        weather_context=weather_context, roads_override=roads_override)
 
     if graph.number_of_nodes() == 0:
         return {
@@ -314,7 +314,7 @@ def calculate_cost_optimized_route(
             graph,
             start_node,
             dest_node,
-            weight="cost",
+            weight="distance" if beta == 0.0 else "cost",
         )
     except (nx.NetworkXNoPath, nx.NodeNotFound):
         return {
@@ -341,14 +341,16 @@ def get_routes(
     beta: float = 25.0,
     start: Optional[List[float]] = None,
     destination: Optional[List[float]] = None,
+    roads_override: Optional[List[Dict[str, Any]]] = None,
+    weather_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Computes both distance-only and heuristic risk-penalized corridors.
     """
     incidents = []
-    weather_ctx = {"rainfall_mm": 0.0, "visibility_km": 10.0}
+    weather_ctx = weather_context or {"rainfall_mm": 0.0, "visibility_km": 10.0}
 
-    if db is not None:
+    if db is not None and weather_context is None:
         try:
             incidents_db = db.query(
                 Incident,
@@ -376,7 +378,13 @@ def get_routes(
     start = start or [88.6138, 27.3389]
     destination = destination or [88.3639, 27.1667]
 
-    # Primary route: Pure shortest distance (alpha=1.0, beta=0.0)
+    # Build the expensive road graph once; both route options use its same
+    # segment risks and differ only in the shortest-path edge weight.
+    graph = build_risk_aware_graph(
+        db=db, alpha=alpha, beta=beta, active_incidents=incidents,
+        weather_context=weather_ctx, roads_override=roads_override)
+
+    # Primary route: shortest distance.
     normal_route = calculate_cost_optimized_route(
         db=db,
         start=start,
@@ -385,6 +393,8 @@ def get_routes(
         beta=0.0,
         active_incidents=incidents,
         weather_context=weather_ctx,
+        roads_override=roads_override,
+        graph_override=graph,
     )
 
     # Safer route: Risk-penalized shortest cost (alpha=1.0, beta=beta)
@@ -396,6 +406,8 @@ def get_routes(
         beta=beta,
         active_incidents=incidents,
         weather_context=weather_ctx,
+        roads_override=roads_override,
+        graph_override=graph,
     )
 
     # Recommendation heuristic

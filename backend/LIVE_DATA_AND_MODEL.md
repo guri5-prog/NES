@@ -5,6 +5,8 @@
 - `GET /api/live-sources?lat=27.5&lon=88.5&radius_degrees=0.65` queries the selected Sikkim area. It returns a separate status for each feed. `LIVE_CONNECTED` means an upstream response was received; `NOT_CONFIGURED`, `CONFIGURATION_REQUIRED`, `CONFIGURED_NOT_INGESTED`, and `UNAVAILABLE` do not contain fabricated measurements.
 - `GET /api/weather` fetches current Open-Meteo data near Gangtok and stores only that observation in PostgreSQL. Visibility is left null because Open-Meteo is not the visibility source in this integration.
 - `GET /api/routes` uses the checked-in Sikkim OSM road export by default. Route coordinates are `[longitude, latitude]`; start and destination can be supplied as `start_lon`, `start_lat`, `destination_lon`, and `destination_lat`. Set `ROUTE_NETWORK_SOURCE=postgis` only after importing the Sikkim network with `python import_roads.py`.
+- `/api/places/search?q=...&state=...` searches submitted place names inside one of the eight Northeast state areas. `/api/routes` accepts `origin_state` and `destination_state`, allowing routes across state borders. Trips within Sikkim use the local Sikkim route graph; other trips use OSRM alternatives and query Valhalla for a distinct alternative when OSRM only returns one. `OSRM_BASE_URL` and `VALHALLA_BASE_URL` can point to project-managed routing servers. The public Nominatim geocoder is queried only on explicit searches and rate-limited to one request per second.
+- Route responses contain weather and visibility samples for the start, midpoint, and destination of both the shortest and risk-weighted path. These samples are descriptive; the route indicator currently uses corridor weather samples taken before routing.
 - `GET /api/network` returns the Sikkim road features inside its `west`, `south`, `east`, `north` bounds.
 - `GET /api/vehicles` returns persisted fleet records only. It no longer writes demo Shillong vehicle positions.
 - `POST /api/susceptibility/predict` accepts `{ "segment_id": "...", "features": { ... } }` with exactly the 24 model columns in `model/models/feature_schema_v3.json` and runs `random_forest_final_v3.joblib`.
@@ -34,3 +36,5 @@ Copy `.env.example` to `.env`, set only the keys you have, then restart the back
 Install the model inference dependencies from the `backend` directory with `pip install -r requirements-model.txt` before calling `/api/susceptibility/predict`.
 
 The route weights `alpha` and `beta` remain configurable on `/api/routes`; they are not calibrated operational settings. With the current heuristic, the safer route is only a demonstration ranking, not an assurance of lower real-world disruption risk.
+
+The public OSRM endpoint is a best-effort demo service, not a production availability commitment. Its published usage policy asks clients to stay at or below one request per second; this backend serializes and rate-limits route requests. For deployment, point `OSRM_BASE_URL` to an owned or contracted routing service.

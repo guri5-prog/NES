@@ -2,3 +2,4 @@ myenv/
 Dataset/
 preprocessing/
 .env
+model/

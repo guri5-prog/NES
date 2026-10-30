@@ -1,139 +1,41 @@
-function levelFor(score) {
-  if (!Number.isFinite(Number(score))) return "unknown";
-  return Number(score) >= 70 ? "high" : Number(score) >= 40 ? "medium" : "low";
+function RouteOption({ title, route, selected, onSelect, disabled }) {
+  return (
+    <button className={`route-option-card ${selected ? "selected" : ""}`} type="button" onClick={onSelect} disabled={disabled}>
+      <span className="route-option-title">{title}</span>
+      {route?.coordinates?.length > 1 ? <>
+        <strong>{route.distance_km ?? "—"}<small> km</small></strong>
+        <span className="route-option-meta">{route.duration_minutes != null ? `About ${route.duration_minutes} min` : "Estimated distance"}</span>
+        {route.risk_score != null && <span className={`route-option-risk ${String(route.risk_level || "unknown").toLowerCase()}`}>Risk {Number(route.risk_score).toFixed(0)}/100 · {String(route.risk_level || "unknown").toLowerCase()}</span>}
+      </> : <span className="route-option-meta">No route available</span>}
+    </button>
+  );
 }
 
-export default function AlertPanel({ risk, weather, routes }) {
-  const prediction = risk?.prediction;
-  const score = Number(prediction?.score);
-  const level = String(prediction?.level || levelFor(score)).toLowerCase();
+export default function AlertPanel({ routes, selectedRoute, onSelectRoute }) {
   const primary = routes?.normal;
-  const safer = routes?.safer;
-  const recommendation = routes?.recommendation;
-  const costFormula = routes?.cost_function;
-
-  // Active risk factors from prediction or routes
-  const factors = prediction?.risk_factors || primary?.risk_factors || [];
+  const alternative = routes?.safer;
+  const hasAlternative = routes?.has_alternative ?? Boolean(alternative?.coordinates?.length > 1);
+  const selected = selectedRoute === "safer" ? alternative : primary;
+  const score = Number(selected?.risk_score);
+  const hasScore = selected?.risk_score != null && Number.isFinite(score);
+  const riskLevel = String(selected?.risk_level || "unknown").toLowerCase();
 
   return (
-    <section className="panel-card risk-panel">
-      <div className="card-heading">
-        <div>
-          <p className="eyebrow">CONDITIONS & AI INFERENCE</p>
-          <h2>Risk assessment</h2>
-        </div>
-        <span className={`risk-chip ${level}`}>
-          {level === "unknown" ? "Pending" : `${level} risk`}
-        </span>
+    <section className="panel-card route-options-panel">
+      <div className="card-heading"><div><p className="eyebrow">AVAILABLE ROUTES</p><h2>Choose a route</h2></div></div>
+      <div className="route-options-grid">
+        <RouteOption title="Primary route" route={primary} selected={selectedRoute === "normal"} onSelect={() => onSelectRoute("normal")} />
+        <RouteOption title="Alternative route" route={alternative} selected={selectedRoute === "safer"} onSelect={() => onSelectRoute("safer")} disabled={!hasAlternative} />
       </div>
-
-      <div className={`risk-summary ${level}`}>
-        <div>
-          <span>Heuristic disruption indicator</span>
-          <strong>
-            {prediction?.probability != null
-              ? `${(prediction.probability * 100).toFixed(0)}`
-              : Number.isFinite(score)
-              ? `${score.toFixed(0)}`
-              : "—"}
-            <small> / 100</small>
-          </strong>
+      {!hasAlternative && <p className="source-status-note">No distinct alternative was returned for these locations.</p>}
+      <div className={`route-risk-summary ${riskLevel}`}>
+        <div className="route-risk-heading"><div><span className="route-option-title">{selectedRoute === "safer" ? "Alternative" : "Primary"} route risk</span><strong>{hasScore ? <>{score.toFixed(0)}<small> / 100</small></> : "—"}</strong></div>
+          <span className={`risk-chip ${riskLevel}`}>{hasScore ? `${riskLevel} risk` : "Not assessed"}</span>
         </div>
-        <div className="risk-meter">
-          <span
-            style={{
-              width: `${
-                prediction?.probability != null
-                  ? Math.max(0, Math.min(prediction.probability * 100, 100))
-                  : Number.isFinite(score)
-                  ? Math.max(0, Math.min(score, 100))
-                  : 0
-              }%`,
-            }}
-          />
-        </div>
-        <small>
-          {prediction?.level ? `${prediction.level} hazard state` : "Awaiting AI inference"}
-        </small>
-      </div>
-
-      {factors.length > 0 && (
-        <div style={{ marginTop: "11px", marginBottom: "4px" }}>
-          <p className="eyebrow" style={{ marginBottom: "5px" }}>PRIMARY RISK DRIVERS</p>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "5px" }}>
-            {factors.slice(0, 3).map((factor, idx) => (
-              <span
-                key={idx}
-                style={{
-                  fontSize: "9px",
-                  padding: "3px 7px",
-                  background: "#f1f4f9",
-                  borderRadius: "6px",
-                  color: "#475569",
-                  fontWeight: "600",
-                }}
-              >
-                ⚠ {factor}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="route-risk-grid">
-        <div>
-          <span>Primary Route (α=1, β=0)</span>
-          <strong>{primary?.distance_km ?? "—"}<small> km</small></strong>
-          <small>
-            Risk index: {primary?.risk_indicator ?? primary?.risk_score ?? "—"}/100 · Cost: {primary?.total_cost ?? primary?.distance_km ?? "—"}
-          </small>
-        </div>
-        <div>
-          <span>Risk-weighted route (α=1, β=25)</span>
-          <strong>{safer?.distance_km ?? "—"}<small> km</small></strong>
-          <small>
-            Risk index: {safer?.risk_indicator ?? safer?.risk_score ?? "—"}/100 · Cost: {safer?.total_cost ?? "—"}
-          </small>
-        </div>
-      </div>
-
-      {recommendation && (
-        <div className={`recommendation ${recommendation.recommended ? "recommended" : ""}`}>
-          <span className="recommendation-icon">
-            {recommendation.recommended ? "!" : "✓"}
-          </span>
-          <p>
-            <strong>
-              {recommendation.recommended
-                ? "Risk-weighted alternative has a lower indicator"
-                : "Primary corridor available"}
-            </strong>
-            <small>{recommendation.reason}</small>
-          </p>
-        </div>
-      )}
-
-      <div className="weather-block">
-        <div className="weather-title">
-          <span>Live Environmental Feed</span>
-          <span className="weather-condition">
-            {weather?.source ? `${weather.source}` : weather?.condition || "Live"}
-          </span>
-        </div>
-        <div className="weather-values">
-          <div>
-            <strong>{weather?.rainfall_mm ?? "—"}<small> mm</small></strong>
-            <span>Rainfall</span>
-          </div>
-          <div>
-            <strong>{weather?.visibility_km ?? "—"}<small> km</small></strong>
-            <span>Visibility</span>
-          </div>
-          <div>
-            <strong>{weather?.temperature_c ?? "—"}<small>°C</small></strong>
-            <span>Temperature</span>
-          </div>
-        </div>
+        {hasScore && <div className="route-risk-meter" aria-label={`Route risk score ${score} out of 100`}><span style={{ width: `${Math.max(0, Math.min(score, 100))}%` }} /></div>}
+        {selected?.risk_factors?.length > 0 ? <div className="route-risk-factors"><span>What affects this route</span><ul>{selected.risk_factors.slice(0, 4).map((factor) => <li key={factor}>{factor}</li>)}</ul></div>
+          : <p className="source-status-note">{!selected ? "Search for a route to see its condition assessment." : selected.risk_data_status === "INSUFFICIENT_DATA" ? "Current weather and nearby incident data are not available for this route." : "No risk factors were reported for this route."}</p>}
+        {hasScore && <p className="route-risk-disclaimer">Heuristic route condition estimate from available environment and incident data; not a disruption probability.</p>}
       </div>
     </section>
   );
