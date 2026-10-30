@@ -53,9 +53,6 @@ function App() {
   const [selectedRoute, setSelectedRoute] = useState("normal");
   const [lastUpdated, setLastUpdated] = useState(null);
   const [signingOut, setSigningOut] = useState(false);
-  const [liveSources, setLiveSources] = useState(null);
-  const [liveSourcesError, setLiveSourcesError] = useState("");
-  const [loadingLiveSources, setLoadingLiveSources] = useState(false);
   const [trip, setTrip] = useState({
     originState: "Sikkim",
     destinationState: "Sikkim",
@@ -130,41 +127,6 @@ function App() {
   useEffect(() => {
     if (user) loadDashboard();
   }, [user, loadDashboard]);
-
-  const refreshLiveSources = useCallback(() => {
-    let active = true;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
-    setLoadingLiveSources(true);
-    setLiveSourcesError("");
-    apiRequest("/api/live-sources", { signal: controller.signal })
-      .then((data) => {
-        if (active) {
-          setLiveSources(data.sources ?? {});
-          setLiveSourcesError("");
-        }
-      })
-      .catch((error) => {
-        if (!active) return;
-        setLiveSourcesError(controller.signal.aborted
-          ? "Live-source checks timed out. Retry to check the providers again."
-          : error.message || "Live-source status is unavailable.");
-      })
-      .finally(() => {
-        clearTimeout(timer);
-        if (active) setLoadingLiveSources(false);
-      });
-    return () => {
-      active = false;
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!user) return undefined;
-    return refreshLiveSources();
-  }, [user, refreshLiveSources]);
 
   async function handleLogout() {
     setSigningOut(true);
@@ -391,12 +353,6 @@ function App() {
 
           <aside className="side-column">
             <AlertPanel routes={displayRoutes} selectedRoute={selectedRoute} onSelectRoute={setSelectedRoute} />
-            <div className="panel-card live-source-panel"><div className="card-heading"><div><p className="eyebrow">EXTERNAL FEEDS</p><h2>Live source status</h2></div><button className="text-button source-refresh-button" type="button" onClick={refreshLiveSources} disabled={loadingLiveSources}>{loadingLiveSources ? "Checking…" : "Refresh status"}</button></div>
-              {liveSourcesError ? <p className="empty-state">{liveSourcesError}</p> : !liveSources ? <p className="empty-state">Checking configured providers…</p> : <div className="source-status-list">{Object.entries(liveSources).map(([key, source]) => <div className="source-status-row" key={key}><span>{({open_meteo:"Open-Meteo",open_weather:"OpenWeather",nasa_eonet:"NASA EONET",nasa_firms:"NASA FIRMS",open_topography:"OpenTopography",open_street_map:"OpenStreetMap",isro_mosdac:"MOSDAC",copernicus_glofas:"GloFAS",mapillary:"Mapillary"})[key] ?? key}</span><span className={`source-status ${String(source.status || "UNKNOWN").toLowerCase()}`}>{source.status || "UNKNOWN"}</span></div>)}</div>}
-              <p className="source-status-note">Only LIVE CONNECTED feeds contain an upstream observation. Other providers need credentials or product setup.</p>
-            </div>
-            <div className="panel-card incident-create"><div className="card-heading"><div><p className="eyebrow">FIELD REPORT</p><h2>Report an incident</h2></div><span className="form-icon">＋</span></div>
-              <IncidentForm onIncidentAdded={handleIncidentAdded} /></div>
           </aside>
         </section>
 
@@ -409,6 +365,8 @@ function App() {
           <div className="panel-card incident-list-card"><div className="card-heading"><div><p className="eyebrow">SITUATIONAL AWARENESS</p><h2>Recent incidents</h2></div><span className="count-pill">{incidents.length} active</span></div>
             <NotificationPanel incidents={incidents} />
           </div>
+          <div className="panel-card incident-create"><div className="card-heading"><div><p className="eyebrow">FIELD REPORT</p><h2>Report an incident</h2></div><span className="form-icon">＋</span></div>
+            <IncidentForm onIncidentAdded={handleIncidentAdded} /></div>
         </section>
         <footer className="page-footer"><span>Northstar Logistics Intelligence</span><span>Risk-aware operations dashboard</span></footer>
       </main>

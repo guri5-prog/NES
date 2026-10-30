@@ -26,3 +26,5 @@
 
 .safer-legend{background:repeating-linear-gradient(to right,#475569 0 5px,transparent 5px 8px)}
 .landslide-controls .congestion-simulation-toggle{color:#b45309;font-weight:700}.landslide-controls .congestion-simulation-toggle input{accent-color:#f97316}
+.lower-grid{grid-template-columns:repeat(3,minmax(0,1fr))}@media(max-width:1050px){.lower-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.lower-grid{grid-template-columns:1fr}}
+.content-grid{align-items:stretch}.map-card{display:flex;flex-direction:column}.map-frame{flex:1}
