@@ -30,6 +30,73 @@ function routePositions(route) {
   return (route?.coordinates ?? []).filter((point) => Array.isArray(point) && point.length >= 2 && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1]))).map(([lon, lat]) => [Number(lat), Number(lon)]);
 }
 
+function riskColor(score, riskBand) {
+  if (riskBand === "congested" || riskBand === "elevated") return "#dc2626";
+  if (riskBand === "caution") return "#eab308";
+  if (!Number.isFinite(score)) return "#2563eb";
+  if (score >= 35) return "#dc2626";
+  if (score >= 15) return "#eab308";
+  return "#2563eb";
+}
+
+function riskLabel(score) {
+  if (score >= 35) return "Elevated risk";
+  if (score >= 15) return "Caution";
+  return "Lower risk";
+}
+
+function routeRiskRuns(route) {
+  const runs = [];
+  const sectionData = route?.risk_sections ?? route?.segments ?? [];
+  const path = routePositions(route);
+  for (const [index, segment] of sectionData.entries()) {
+    const positions = Array.isArray(segment.coordinates)
+      ? routePositions({ coordinates: segment.coordinates })
+      : path.slice(index, index + 2);
+    if (positions.length < 2) continue;
+    const score = Number(segment.max_risk_indicator ?? segment.risk_indicator);
+    const color = riskColor(score, segment.risk_band);
+    const previous = runs[runs.length - 1];
+    const startsAtPreviousEnd = previous && Math.abs(previous.positions.at(-1)[0] - positions[0][0]) < 1e-7
+      && Math.abs(previous.positions.at(-1)[1] - positions[0][1]) < 1e-7;
+    if (previous && previous.color === color && startsAtPreviousEnd) {
+      previous.positions.push(...positions.slice(1));
+      previous.maxScore = Math.max(previous.maxScore, Number.isFinite(score) ? score : 0);
+      previous.segmentCount += Number(segment.segment_count ?? 1);
+    } else {
+      runs.push({ positions, color, maxScore: Number.isFinite(score) ? score : 0, segmentCount: Number(segment.segment_count ?? 1) });
+    }
+  }
+  return runs;
+}
+
+function pointAlongRoute(route, fraction) {
+  if (route.length < 2) return route[0] ?? null;
+  const lengths = route.slice(1).map((point, index) => {
+    const [lat1, lon1] = route[index];
+    const [lat2, lon2] = point;
+    const radians = Math.PI / 180;
+    const deltaLat = (lat2 - lat1) * radians;
+    const deltaLon = (lon2 - lon1) * radians;
+    const value = Math.sin(deltaLat / 2) ** 2 + Math.cos(lat1 * radians) * Math.cos(lat2 * radians) * Math.sin(deltaLon / 2) ** 2;
+    return 6371 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(Math.max(0, 1 - value)));
+  });
+  const target = lengths.reduce((sum, length) => sum + length, 0) * Math.max(0, Math.min(1, fraction));
+  let traversed = 0;
+  for (let index = 0; index < lengths.length; index += 1) {
+    const length = lengths[index];
+    if (traversed + length >= target) {
+      const ratio = length ? (target - traversed) / length : 0;
+      return [
+        route[index][0] + (route[index + 1][0] - route[index][0]) * ratio,
+        route[index][1] + (route[index + 1][1] - route[index][1]) * ratio,
+      ];
+    }
+    traversed += length;
+  }
+  return route[route.length - 1];
+}
+
 function escapePopup(value) {
   return String(value ?? "Unknown").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 }
@@ -44,6 +111,39 @@ function MapView({ network, routes, vehicles = [], incidents = [], selectedRoute
   const primary = useMemo(() => routePositions(routes?.normal), [routes]);
   const safer = useMemo(() => routePositions(routes?.safer), [routes]);
   const activeRoute = selectedRoute === "safer" ? safer : primary;
+  const primaryRiskRuns = useMemo(() => routeRiskRuns(routes?.normal), [routes]);
+  const saferRiskRuns = useMemo(() => routeRiskRuns(routes?.safer), [routes]);
+  const routeIsSelected = activeRoute.length > 1;
+  const visibleVehicles = vehicles.flatMap((vehicle, index) => {
+    if (routeIsSelected) {
+      const position = pointAlongRoute(activeRoute, (index + 1) / (vehicles.length + 1));
+      return position ? [{ vehicle, index, position, offsetKm: null, simulated: true }] : [];
+    }
+    const lat = Number(vehicle.lat), lon = Number(vehicle.lon);
+    if (vehicle.lat == null || vehicle.lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return [];
+    return [{ vehicle, index, position: [lat, lon], offsetKm: null, simulated: false }];
+  });
+
+  function renderRoute(routeKey, runs, fallbackPositions, route, selected, color, inactiveColor) {
+    if (runs.length) return <>
+      {routeKey === "safer" && fallbackPositions.length > 1 && <Polyline key="alternative-route-underlay" positions={fallbackPositions} eventHandlers={{ click: () => onSelectRoute?.(routeKey) }} pathOptions={{ color: selected ? color : inactiveColor, weight: selected ? 9 : 7, opacity: selected ? 0.95 : 0.72, lineCap: "round", lineJoin: "round" }} />}
+      {runs.map((run, index) => <Polyline
+        key={`${routeKey}-risk-run-${index}`}
+        positions={run.positions}
+        eventHandlers={{ click: () => onSelectRoute?.(routeKey) }}
+        pathOptions={{
+          color: run.color,
+          weight: selected ? 5 : 3,
+          opacity: selected ? 0.98 : 0.8,
+          dashArray: routeKey === "safer" ? "8 7" : undefined,
+          lineCap: "round",
+          lineJoin: "round",
+        }}
+      ><Popup><strong>{routeKey === "normal" ? "Primary" : "Alternative"} route · {riskLabel(run.maxScore)}</strong><br />Highest section score: {run.maxScore.toFixed(1)}/100<br />{run.segmentCount} road section(s)<br />Heuristic guidance only; check current conditions before travel.</Popup></Polyline>)}
+    </>;
+    if (fallbackPositions.length < 2) return null;
+    return <Polyline positions={fallbackPositions} eventHandlers={{ click: () => onSelectRoute?.(routeKey) }} pathOptions={{ color: selected ? color : inactiveColor, weight: selected ? 7 : 4, opacity: selected ? 0.96 : 0.58, dashArray: routeKey === "safer" ? "8 7" : undefined, lineCap: "round", lineJoin: "round" }}><Popup><strong>{routeKey === "normal" ? "Primary route" : "Alternative route"}</strong><br />Distance: {route?.distance_km ?? "—"} km</Popup></Polyline>;
+  }
 
   return (
     <div className="map-container">
@@ -76,14 +176,12 @@ function MapView({ network, routes, vehicles = [], incidents = [], selectedRoute
           }}
         />}
         {network?.features?.length > 0 && <GeoJSON data={network} style={() => ({ color: "#8491a5", weight: 2, opacity: 0.45 })} />}
-        {primary.length > 1 && <Polyline positions={primary} eventHandlers={{ click: () => onSelectRoute?.("normal") }} pathOptions={{ color: selectedRoute === "normal" ? "#2563eb" : "#94a3b8", weight: selectedRoute === "normal" ? 7 : 4, opacity: selectedRoute === "normal" ? 0.96 : 0.58, lineCap: "round", lineJoin: "round" }}><Popup><strong>Primary route</strong><br />Distance: {routes?.normal?.distance_km ?? "—"} km{routes?.normal?.duration_minutes != null && <><br />Estimated time: {routes.normal.duration_minutes} min</>}</Popup></Polyline>}
-        {safer.length > 1 && <Polyline positions={safer} eventHandlers={{ click: () => onSelectRoute?.("safer") }} pathOptions={{ color: selectedRoute === "safer" ? "#15945a" : "#86b99b", weight: selectedRoute === "safer" ? 7 : 4, opacity: selectedRoute === "safer" ? 0.96 : 0.62, dashArray: "8 7", lineCap: "round", lineJoin: "round" }}><Popup><strong>Alternative route</strong><br />Distance: {routes?.safer?.distance_km ?? "—"} km{routes?.safer?.duration_minutes != null && <><br />Estimated time: {routes.safer.duration_minutes} min</>}</Popup></Polyline>}
+        {renderRoute("normal", primaryRiskRuns, primary, routes?.normal, selectedRoute === "normal", "#2563eb", "#94a3b8")}
+        {renderRoute("safer", saferRiskRuns, safer, routes?.safer, selectedRoute === "safer", "#15945a", "#86b99b")}
         {activeRoute.length > 1 && <><CircleMarker center={activeRoute[0]} radius={7} pathOptions={{ color: "#fff", weight: 2, fillColor: "#16a34a", fillOpacity: 1 }}><Popup>Route start</Popup></CircleMarker><CircleMarker center={activeRoute[activeRoute.length - 1]} radius={7} pathOptions={{ color: "#fff", weight: 2, fillColor: "#2563eb", fillOpacity: 1 }}><Popup>Route destination</Popup></CircleMarker></>}
-        {vehicles.map((vehicle, index) => {
-          const lat = Number(vehicle.lat), lon = Number(vehicle.lon);
-          if (vehicle.lat == null || vehicle.lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-          return <Marker key={vehicle.id ?? index} position={[lat, lon]} icon={vehicleIcon}><Popup><strong>{vehicle.id || "Vehicle"}</strong><br />{vehicle.driver || "Driver not specified"}<br />{vehicle.cargo || "Cargo not specified"}<br />Speed: {vehicle.speed ?? "—"} km/h<br />Status: {vehicle.status || "Unknown"}</Popup></Marker>;
-        })}
+        {visibleVehicles.map(({ vehicle, index, position, offsetKm, simulated }) => <Marker key={vehicle.id ?? index} position={position} icon={vehicleIcon}>
+          <Popup><strong>{simulated ? `Simulation vehicle ${index + 1}` : vehicle.id || "Vehicle"}</strong><br />{vehicle.driver || "Driver not specified"}<br />{vehicle.cargo || "Cargo not specified"}<br />Speed: {vehicle.speed ?? "—"} km/h<br />Status: {simulated ? "Simulated on selected route" : vehicle.status || "Unknown"}{offsetKm != null && <><br />Marker aligned to selected route; GPS offset {offsetKm.toFixed(1)} km.</>}</Popup>
+        </Marker>)}
         {incidents.map((incident, index) => {
           const lat = Number(incident.lat), lon = Number(incident.lon);
           if (incident.lat == null || incident.lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;

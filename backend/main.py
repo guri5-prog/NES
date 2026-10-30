@@ -551,6 +551,32 @@ def routes(
     if not (-180 <= start_lon <= 180 and -90 <= start_lat <= 90 and
             -180 <= destination_lon <= 180 and -90 <= destination_lat <= 90):
         raise HTTPException(status_code=422, detail="Route coordinates are outside valid latitude/longitude ranges.")
+
+    def build_risk_sections(route_coordinates, segments):
+        sections = []
+        for position, segment in enumerate(segments):
+            route_index = int(segment.get("route_index", position))
+            if route_index < 0 or route_index + 1 >= len(route_coordinates):
+                continue
+            score = float(segment.get("risk_indicator") or 0.0)
+            band = "congested" if segment.get("congestion_detected") else "elevated" if score >= 35 else "caution" if score >= 15 else "safe"
+            section_coordinates = [route_coordinates[route_index], route_coordinates[route_index + 1]]
+            previous = sections[-1] if sections else None
+            if previous and previous["risk_band"] == band and previous["coordinates"][-1] == section_coordinates[0]:
+                previous["coordinates"].append(section_coordinates[1])
+                previous["max_risk_indicator"] = max(previous["max_risk_indicator"], score)
+                previous["segment_count"] += 1
+                previous["congestion_detected"] = previous["congestion_detected"] or bool(segment.get("congestion_detected"))
+            else:
+                sections.append({"risk_band": band, "coordinates": section_coordinates,
+                    "max_risk_indicator": score, "segment_count": 1,
+                    "congestion_detected": bool(segment.get("congestion_detected"))})
+        return sections
+
+    def is_congestion_report(incident):
+        report_text = " ".join(str(incident.get(field) or "") for field in ("type", "description")).casefold()
+        return any(term in report_text for term in ("congest", "traffic jam", "traffic queue", "road blockage", "road block", "blocked road", "closure"))
+
     origin_west, origin_south, origin_east, origin_north = NE_STATE_BOUNDS[origin_state]
     destination_west, destination_south, destination_east, destination_north = NE_STATE_BOUNDS[destination_state]
     if not (origin_west <= start_lon <= origin_east and origin_south <= start_lat <= origin_north):
@@ -569,6 +595,21 @@ def routes(
             raise HTTPException(status_code=503, detail={"message":"The route service is temporarily unavailable. Try again shortly.",
                 "source_status":road_routes.get("status")})
         options = road_routes["routes"]
+        # Keep every returned path oriented from the selected origin to the
+        # selected destination, even if an upstream routing provider returns
+        # its GeoJSON coordinates in reverse order.
+        requested_start = (start_lon, start_lat)
+        requested_destination = (destination_lon, destination_lat)
+        for option in options:
+            route_coordinates = option.get("coordinates", [])
+            if len(route_coordinates) < 2:
+                continue
+            forward_gap = (haversine_distance(requested_start, route_coordinates[0])
+                           + haversine_distance(requested_destination, route_coordinates[-1]))
+            reverse_gap = (haversine_distance(requested_start, route_coordinates[-1])
+                           + haversine_distance(requested_destination, route_coordinates[0]))
+            if reverse_gap < forward_gap:
+                option["coordinates"] = list(reversed(route_coordinates))
         primary = options[0]
         alternate = options[1] if len(options) > 1 else {**primary, "coordinates": [], "distance_km": None, "duration_minutes": None}
         primary["route_type"] = "primary"
@@ -587,7 +628,7 @@ def routes(
         ).all()
         incident_points = [
             {"id": incident.incident_code or incident.id, "severity": incident.severity,
-             "type": incident.type, "lat": lat, "lon": lon}
+             "type": incident.type, "description": incident.description, "lat": lat, "lon": lon}
             for incident, lat, lon in incident_records if lat is not None and lon is not None
         ]
 
@@ -634,11 +675,13 @@ def routes(
                 seen_incidents.update(incident["id"] for incident in local_incidents)
                 segment_results.append({
                     "segment_id": assessment["segment_id"],
+                    "route_index": index - 1,
                     "distance_km": round(segment_length, 2),
                     "risk_indicator": score,
                     "risk_level": assessment["risk_level"],
                     "risk_factors": assessment["risk_factors"],
                     "nearby_incident_count": len(local_incidents),
+                    "congestion_detected": any(is_congestion_report(incident) for incident in local_incidents),
                 })
 
             if not total_length or (not has_weather_observation and not seen_incidents):
@@ -651,12 +694,14 @@ def routes(
             risk_level = "HIGH" if route_score >= 65 else "MEDIUM" if route_score >= 35 else "LOW"
             factors = [factor for factor in dict.fromkeys(all_factors)
                        if factor != "Nominal Mountain Corridor Baseline"] or ["Nominal Mountain Corridor Baseline"]
+            risk_sections = build_risk_sections(coordinates, segment_results)
             segment_results.sort(key=lambda item: item["risk_indicator"], reverse=True)
             route.update({"risk_score": route_score, "risk_probability": None,
                 "risk_indicator": route_score, "risk_level": risk_level,
                 "risk_factors": factors, "risk_assessment_type": "heuristic",
                 "risk_data_status": "LIVE_DATA" if has_weather_observation else "INCIDENTS_ONLY",
-                "nearby_incident_count": len(seen_incidents), "segments": segment_results[:5]})
+                "nearby_incident_count": len(seen_incidents), "segments": segment_results[:5],
+                "risk_sections": risk_sections})
 
         assess_external_route(primary, route_weather["normal"])
         if len(options) > 1:
@@ -704,7 +749,7 @@ def routes(
     ).filter(Incident.geom.isnot(None)).all()
     incident_points = [
         {"id": incident.incident_code or incident.id, "severity": incident.severity,
-         "type": incident.type, "lat": lat, "lon": lon}
+         "type": incident.type, "description": incident.description, "lat": lat, "lon": lon}
         for incident, lat, lon in incident_records if lat is not None and lon is not None
         and 87.0 <= lon <= 90.0 and 26.0 <= lat <= 29.0
     ]
@@ -742,6 +787,7 @@ def routes(
             segment["risk_level"] = assessment["risk_level"]
             segment["risk_factors"] = assessment["risk_factors"]
             segment["nearby_incident_count"] = len(local_incidents)
+            segment["congestion_detected"] = any(is_congestion_report(incident) for incident in local_incidents)
             segment["risk_probability"] = None
             total_length += segment_length
             weighted_score += assessment["score"] * segment_length
@@ -757,6 +803,7 @@ def routes(
             route["risk_assessment_type"] = "heuristic"
             route["risk_data_status"] = "LIVE_DATA" if weather_points else ("INCIDENTS_ONLY" if seen_incidents else "STATIC_BASELINE")
             route["nearby_incident_count"] = len(seen_incidents)
+            route["risk_sections"] = build_risk_sections(coordinates, segments)
     result["route_weather_context_used"] = route_weather_context
     result["has_alternative"] = bool(result.get("safer", {}).get("coordinates") and
                                      result.get("safer", {}).get("coordinates") != result.get("normal", {}).get("coordinates"))
