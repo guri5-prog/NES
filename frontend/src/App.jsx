@@ -4,14 +4,18 @@ import MapView from "./components/MapView";
 import AlertPanel from "./components/AlertPanel";
 import IncidentForm from "./components/IncidentForm";
 import NotificationPanel from "./components/NotificationPanel";
+import AuthPage from "./components/AuthPage";
 
 import "./App.css";
 
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = "";
 
 
 function App() {
+
+  const [user, setUser] = useState(null);
+  const [authChecking, setAuthChecking] = useState(true);
 
   const [network, setNetwork] = useState(null);
 
@@ -58,6 +62,11 @@ function App() {
       for (const response of responses) {
 
         if (!response.ok) {
+
+          if (response.status === 401) {
+            setUser(null);
+            return;
+          }
 
           throw new Error(
             `API request failed: ${response.status}`
@@ -201,6 +210,20 @@ function App() {
 
 
   useEffect(() => {
+    fetch(`${API_URL}/api/auth/session`, { credentials: "include" })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return response.json();
+      })
+      .then((data) => setUser(data?.user || null))
+      .catch(() => setUser(null))
+      .finally(() => setAuthChecking(false));
+  }, []);
+
+
+  useEffect(() => {
+
+    if (!user) return undefined;
 
     fetchData();
 
@@ -217,7 +240,16 @@ function App() {
 
     };
 
-  }, []);
+  }, [user]);
+
+
+  async function handleLogout() {
+    try {
+      await fetch(`${API_URL}/api/auth/logout`, { method: "POST", credentials: "include" });
+    } finally {
+      setUser(null);
+    }
+  }
 
 
   // --------------------------------
@@ -237,6 +269,14 @@ function App() {
 
   }
 
+
+  if (authChecking) {
+    return <main className="auth-page"><p className="auth-loading">Loading your session...</p></main>;
+  }
+
+  if (!user) {
+    return <AuthPage onAuthenticated={setUser} />;
+  }
 
   return (
 
@@ -262,6 +302,7 @@ function App() {
         </div>
 
 
+        <div className="header-actions">
         <div className="system-status">
 
           <span
@@ -276,6 +317,8 @@ function App() {
             ? "System Online"
             : "Backend Offline"}
 
+        </div>
+        <div className="account-menu"><span>{user.name}</span><button onClick={handleLogout}>Sign out</button></div>
         </div>
 
       </header>
