@@ -18,6 +18,9 @@ export default function AlertPanel({ routes, selectedRoute, onSelectRoute }) {
   const selected = selectedRoute === "safer" ? alternative : primary;
   const score = Number(selected?.risk_score);
   const hasScore = selected?.risk_score != null && Number.isFinite(score);
+  const hasRouteComparison = hasAlternative && primary?.risk_score != null && alternative?.risk_score != null
+    && Number.isFinite(Number(primary.risk_score)) && Number.isFinite(Number(alternative.risk_score));
+  const scoreDifference = hasRouteComparison ? Number(primary.risk_score) - Number(alternative.risk_score) : 0;
   const riskLevel = String(selected?.risk_level || "unknown").toLowerCase();
   const watchSections = [...(selected?.segments ?? [])]
     .filter((segment) => Number(segment.risk_indicator) > 0)
@@ -32,6 +35,7 @@ export default function AlertPanel({ routes, selectedRoute, onSelectRoute }) {
         <RouteOption title="Primary route" route={primary} selected={selectedRoute === "normal"} onSelect={() => onSelectRoute("normal")} />
         <RouteOption title="Alternative route" route={alternative} selected={selectedRoute === "safer"} onSelect={() => onSelectRoute("safer")} disabled={!hasAlternative} />
       </div>
+      {hasRouteComparison && <p className="source-status-note">{Math.abs(scoreDifference) < 0.1 ? "Both routes currently have similar risk scores from their path conditions." : scoreDifference > 0 ? `The alternative route scores ${scoreDifference.toFixed(1)} points lower than the primary route.` : `The primary route scores ${Math.abs(scoreDifference).toFixed(1)} points lower than the alternative route.`}</p>}
       {!hasAlternative && <p className="source-status-note">No distinct alternative was returned for these locations.</p>}
       <div className={`route-risk-summary ${riskLevel}`}>
         <div className="route-risk-heading"><div><span className="route-option-title">{selectedRoute === "safer" ? "Alternative" : "Primary"} route risk</span><strong>{hasScore ? <>{score.toFixed(1)}<small> / 100</small></> : "—"}</strong></div>
@@ -41,7 +45,7 @@ export default function AlertPanel({ routes, selectedRoute, onSelectRoute }) {
         {selected?.risk_factors?.length > 0 ? <div className="route-risk-factors"><span>What affects this route</span><ul>{selected.risk_factors.slice(0, 4).map((factor) => <li key={factor}>{factor}</li>)}</ul></div>
           : <p className="source-status-note">{!selected ? "Search for a route to see its condition assessment." : selected.risk_data_status === "INSUFFICIENT_DATA" ? "Current weather and nearby incident data are not available for this route." : "No risk factors were reported for this route."}</p>}
         {watchSections.length > 0 && <div className="route-risk-factors"><span>Highest scoring road sections</span><ul>{watchSections.map((segment) => <li key={segment.segment_id}>{segment.road || "Route section"}: {Number(segment.risk_indicator).toFixed(0)}/100{segment.distance_km != null ? ` · ${segment.distance_km} km` : ""}{segment.nearby_incident_count ? ` · ${segment.nearby_incident_count} nearby report(s)` : ""}</li>)}</ul></div>}
-        {hasScore && <p className="route-risk-disclaimer">Heuristic estimate from sampled weather and known incidents. Routes can share a score when those inputs are similar; this is not a disruption probability.</p>}
+        {hasScore && <p className="route-risk-disclaimer">{selected?.risk_data_status === "SIMULATED" ? "This score includes the congestion simulation shown on the map; it is not a live traffic reading or disruption probability." : "Heuristic estimate from sampled weather and known incidents. Routes can share a score when those inputs are similar; this is not a disruption probability."}</p>}
       </div>
     </section>
   );

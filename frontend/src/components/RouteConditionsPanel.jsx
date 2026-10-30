@@ -16,7 +16,7 @@ export default function RouteConditionsPanel({ routes, selectedRoute = "normal" 
         <div><span>Rain, 24 hours</span><b>{point.rainfall_24h_mm == null ? "—" : `${point.rainfall_24h_mm} mm`}</b></div>
         <small>OpenWeather: {labels[point.visibility_status] || point.visibility_status || "unknown"}</small>
       </article>)}</div> : <p className="empty-state">Search for two places and calculate a route to load corridor conditions.</p>}
-      <p className="source-status-note">Weather is sampled at the chosen route’s start, midpoint, and destination. Conditions may vary between sample points.</p>
+      <p className="source-status-note">Live weather is sampled at five distance-spaced points along the selected route. Conditions may vary between sample points.</p>
     </section>
   );
 }

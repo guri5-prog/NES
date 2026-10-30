@@ -375,16 +375,34 @@ def get_osrm_routes(start: List[float], destination: List[float]) -> Dict[str, A
 
 
 def get_route_weather_conditions(coordinates: List[List[float]]) -> Dict[str, Any]:
-    """Fetch current weather/visibility at start, midpoint and end of a route."""
-    if not coordinates:
+    """Sample live weather at five distance-based points along a route."""
+    coordinates = [point for point in coordinates if isinstance(point, (list, tuple)) and len(point) >= 2]
+    if len(coordinates) < 2:
         return {"status": "NO_ROUTE", "points": []}
-    samples = [("Start", 0)]
-    if len(coordinates) > 2:
-        samples.append(("Midpoint", len(coordinates)//2))
-    if len(coordinates) > 1:
-        samples.append(("Destination", len(coordinates)-1))
-    points = [{"position": label, "lon": float(coordinates[index][0]), "lat": float(coordinates[index][1])}
-              for label, index in samples]
+
+    def distance_km(first, second):
+        lon1, lat1 = map(math.radians, (float(first[0]), float(first[1])))
+        lon2, lat2 = map(math.radians, (float(second[0]), float(second[1])))
+        delta_lon, delta_lat = lon2 - lon1, lat2 - lat1
+        arc = math.sin(delta_lat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(delta_lon / 2) ** 2
+        return 6371.0 * 2 * math.atan2(math.sqrt(arc), math.sqrt(max(0.0, 1.0 - arc)))
+
+    segment_lengths = [distance_km(a, b) for a, b in zip(coordinates[:-1], coordinates[1:])]
+    total_length = sum(segment_lengths)
+    samples = [("Start", 0.0), ("Quarter", 0.25), ("Midpoint", 0.5), ("Three-quarter", 0.75), ("Destination", 1.0)]
+    points = []
+    for label, fraction in samples:
+        target = total_length * fraction
+        traversed = 0.0
+        sampled = coordinates[-1]
+        for index, segment_length in enumerate(segment_lengths):
+            if traversed + segment_length >= target:
+                ratio = (target - traversed) / segment_length if segment_length else 0.0
+                sampled = [float(coordinates[index][axis]) + (float(coordinates[index + 1][axis]) - float(coordinates[index][axis])) * ratio
+                           for axis in (0, 1)]
+                break
+            traversed += segment_length
+        points.append({"position": label, "lon": sampled[0], "lat": sampled[1]})
     jobs = []
     with ThreadPoolExecutor(max_workers=max(1, len(points)*2)) as pool:
         for point in points:
@@ -393,9 +411,16 @@ def get_route_weather_conditions(coordinates: List[List[float]]) -> Dict[str, An
         results = []
         for point, meteo_job, weather_job in jobs:
             meteo, weather = meteo_job.result(), weather_job.result()
+            rainfall_mm = meteo.get("rainfall_mm")
+            rainfall_source = "Open-Meteo" if rainfall_mm is not None else None
+            if rainfall_mm is None and weather.get("status") == "LIVE_CONNECTED":
+                rainfall_mm = weather.get("rainfall_1h_mm")
+                rainfall_source = "OpenWeather" if rainfall_mm is not None else None
             results.append({**point,
-                "status": "LIVE_CONNECTED" if meteo.get("status") == "LIVE_CONNECTED" else meteo.get("status"),
-                "rainfall_mm": meteo.get("rainfall_mm"), "temperature_c": meteo.get("temperature_c"),
+                "status": "LIVE_CONNECTED" if meteo.get("status") == "LIVE_CONNECTED" or weather.get("status") == "LIVE_CONNECTED" else "UNAVAILABLE",
+                "rainfall_status": "LIVE_CONNECTED" if rainfall_mm is not None else "UNAVAILABLE",
+                "rainfall_source": rainfall_source,
+                "rainfall_mm": rainfall_mm, "temperature_c": meteo.get("temperature_c") if meteo.get("temperature_c") is not None else weather.get("temperature_c"),
                 "rainfall_24h_mm": meteo.get("rainfall_24h_mm"),
                 "rainfall_72h_mm": meteo.get("rainfall_72h_mm"),
                 "humidity": meteo.get("humidity"), "wind_speed_kmh": meteo.get("wind_speed_kmh"),
@@ -403,7 +428,9 @@ def get_route_weather_conditions(coordinates: List[List[float]]) -> Dict[str, An
                 "visibility_status": weather.get("status") if weather.get("visibility_km") is not None else meteo.get("status"),
                 "condition": weather.get("condition"), "observed_at": meteo.get("observation_time")})
     connected = any(point["status"] == "LIVE_CONNECTED" for point in results)
-    return {"status": "LIVE_CONNECTED" if connected else "UNAVAILABLE", "points": results,
+    rainfall_connected = any(point["rainfall_status"] == "LIVE_CONNECTED" for point in results)
+    return {"status": "LIVE_CONNECTED" if connected else "UNAVAILABLE",
+            "rainfall_status": "LIVE_CONNECTED" if rainfall_connected else "UNAVAILABLE", "points": results,
             "summary": {"maximum_rainfall_mm": max((p["rainfall_mm"] for p in results if p["rainfall_mm"] is not None), default=None),
                         "maximum_rainfall_24h_mm": max((p["rainfall_24h_mm"] for p in results if p["rainfall_24h_mm"] is not None), default=None),
                         "maximum_rainfall_72h_mm": max((p["rainfall_72h_mm"] for p in results if p["rainfall_72h_mm"] is not None), default=None),
@@ -465,6 +492,7 @@ def get_live_weather_openweather(lat: float, lon: float) -> Dict[str, Any]:
             return {"source":"OpenWeather", "status":"UNAVAILABLE", "visibility_km":None}
         return {"source":"OpenWeather", "status":"LIVE_CONNECTED", "temperature_c":data["main"].get("temp"),
             "humidity":data["main"].get("humidity"), "visibility_km":(data.get("visibility")/1000 if data.get("visibility") is not None else None),
+            "rainfall_1h_mm":(data.get("rain") or {}).get("1h"),
             "condition":(data.get("weather") or [{}])[0].get("description"), "observation_time":data.get("dt")}
     return _cached(key, load)
 

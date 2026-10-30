@@ -559,7 +559,8 @@ def routes(
             if route_index < 0 or route_index + 1 >= len(route_coordinates):
                 continue
             score = float(segment.get("risk_indicator") or 0.0)
-            band = "congested" if segment.get("congestion_detected") else "elevated" if score >= 35 else "caution" if score >= 15 else "safe"
+            congestion_level = segment.get("congestion_level")
+            band = ("congested_high" if congestion_level == "high" else "congested_mild") if segment.get("congestion_detected") else "elevated" if score >= 35 else "caution" if score >= 15 else "safe"
             section_coordinates = [route_coordinates[route_index], route_coordinates[route_index + 1]]
             previous = sections[-1] if sections else None
             if previous and previous["risk_band"] == band and previous["coordinates"][-1] == section_coordinates[0]:
@@ -576,6 +577,32 @@ def routes(
     def is_congestion_report(incident):
         report_text = " ".join(str(incident.get(field) or "") for field in ("type", "description")).casefold()
         return any(term in report_text for term in ("congest", "traffic jam", "traffic queue", "road blockage", "road block", "blocked road", "closure"))
+
+    def include_reported_congestion(assessment, incidents):
+        reports = [incident for incident in incidents if is_congestion_report(incident)]
+        if not reports:
+            return assessment
+        severity_floor = max(
+            85.0 if str(report.get("severity", "")).upper() == "HIGH" else
+            60.0 if str(report.get("severity", "")).upper() == "MEDIUM" else 45.0
+            for report in reports
+        )
+        score = min(100.0, max(float(assessment["score"]), severity_floor + 5.0 * (len(reports) - 1)))
+        assessment["score"] = round(score, 2)
+        assessment["risk_level"] = "HIGH" if score >= 65 else "MEDIUM" if score >= 35 else "LOW"
+        assessment["congestion_level"] = "high" if score >= 65 or any(str(report.get("severity", "")).upper() == "HIGH" for report in reports) else "mild"
+        assessment["congestion_report_count"] = len(reports)
+        assessment["risk_factors"] = list(dict.fromkeys([
+            *assessment.get("risk_factors", []),
+            f"Reported road congestion/blockage ({len(reports)} report{'s' if len(reports) != 1 else ''})",
+        ]))
+        return assessment
+
+    def congestion_reports_near_segment(start_xy, end_xy, incident_points):
+        return [incident for incident in incident_points
+                if is_congestion_report(incident)
+                and point_to_segment_distance_km(
+                    (float(incident["lon"]), float(incident["lat"])), start_xy, end_xy) <= 0.75]
 
     origin_west, origin_south, origin_east, origin_north = NE_STATE_BOUNDS[origin_state]
     destination_west, destination_south, destination_east, destination_north = NE_STATE_BOUNDS[destination_state]
@@ -654,6 +681,7 @@ def routes(
                 local_incidents = [incident for incident in incident_points
                     if point_to_segment_distance_km(
                         (float(incident["lon"]), float(incident["lat"])), start_xy, end_xy) <= 2.0]
+                local_congestion = congestion_reports_near_segment(start_xy, end_xy, incident_points)
                 if weather_points:
                     weather_point = min(weather_points, key=lambda point: haversine_distance(
                         midpoint, (float(point["lon"]), float(point["lat"]))))
@@ -668,6 +696,7 @@ def routes(
                     rainfall_24h_mm=rainfall_24h,
                     visibility_km=float(visibility if visibility is not None else 10.0),
                     slope_deg=0.0, active_incidents=local_incidents)
+                assessment = include_reported_congestion(assessment, local_congestion)
                 score = float(assessment["score"])
                 total_length += segment_length
                 weighted_score += score * segment_length
@@ -681,7 +710,9 @@ def routes(
                     "risk_level": assessment["risk_level"],
                     "risk_factors": assessment["risk_factors"],
                     "nearby_incident_count": len(local_incidents),
-                    "congestion_detected": any(is_congestion_report(incident) for incident in local_incidents),
+                    "congestion_detected": bool(local_congestion),
+                    "congestion_level": assessment.get("congestion_level"),
+                    "congestion_report_count": assessment.get("congestion_report_count", 0),
                 })
 
             if not total_length or (not has_weather_observation and not seen_incidents):
@@ -772,6 +803,7 @@ def routes(
             local_incidents = [incident for incident in incident_points
                 if point_to_segment_distance_km(
                     (float(incident["lon"]), float(incident["lat"])), start_xy, end_xy) <= 2.0]
+            local_congestion = congestion_reports_near_segment(start_xy, end_xy, incident_points)
             midpoint = ((start_xy[0] + end_xy[0]) / 2.0, (start_xy[1] + end_xy[1]) / 2.0)
             weather_point = min(weather_points, key=lambda point: haversine_distance(
                 midpoint, (float(point["lon"]), float(point["lat"])))) if weather_points else {}
@@ -782,12 +814,15 @@ def routes(
                 visibility_km=float(weather_point.get("visibility_km")
                                     if weather_point.get("visibility_km") is not None else 10.0),
                 slope_deg=0.0, active_incidents=local_incidents)
+            assessment = include_reported_congestion(assessment, local_congestion)
             segment_length = float(segment.get("distance_km") or 0.0)
             segment["risk_indicator"] = assessment["score"]
             segment["risk_level"] = assessment["risk_level"]
             segment["risk_factors"] = assessment["risk_factors"]
             segment["nearby_incident_count"] = len(local_incidents)
-            segment["congestion_detected"] = any(is_congestion_report(incident) for incident in local_incidents)
+            segment["congestion_detected"] = bool(local_congestion)
+            segment["congestion_level"] = assessment.get("congestion_level")
+            segment["congestion_report_count"] = assessment.get("congestion_report_count", 0)
             segment["risk_probability"] = None
             total_length += segment_length
             weighted_score += assessment["score"] * segment_length
