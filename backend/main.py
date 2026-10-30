@@ -179,6 +179,18 @@ class IncidentCreate(BaseModel):
 def root():
     return {
         "message": "AI Smart Logistics API is running",
+        "docs": "/docs",
+        "redoc": "/redoc",
+        "status": "OK"
+    }
+
+
+@app.get("/api")
+def api_root():
+    return {
+        "message": "AI Smart Logistics API is running",
+        "docs": "/docs",
+        "redoc": "/redoc",
         "status": "OK"
     }
 
@@ -610,3 +622,8 @@ def network(db: Session = Depends(get_db), _user: User = Depends(authenticated_u
         "type": "FeatureCollection",
         "features": features
     }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

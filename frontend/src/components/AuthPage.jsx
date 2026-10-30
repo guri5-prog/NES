@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-const API_URL = "";
+const API_URL = import.meta.env.VITE_API_URL ?? "";
 
 export default function AuthPage({ onAuthenticated }) {
   const [mode, setMode] = useState("login");
@@ -11,33 +11,26 @@ export default function AuthPage({ onAuthenticated }) {
   const [busy, setBusy] = useState(false);
 
   async function submit(event) {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
+    event.preventDefault(); setBusy(true); setError("");
     try {
       const response = await fetch(`${API_URL}/api/auth/${mode === "register" ? "register" : "login"}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
         body: JSON.stringify(mode === "register" ? { name, email, password } : { email, password }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Authentication failed.");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Authentication failed.");
       onAuthenticated(data.user);
-    } catch (requestError) {
-      setError(requestError.message || "Could not connect to the server.");
-    } finally {
-      setBusy(false);
-    }
+    } catch (requestError) { setError(requestError.message || "Could not connect to the server."); }
+    finally { setBusy(false); }
   }
 
   return (
     <main className="auth-page">
       <section className="auth-card">
-        <div className="auth-brand">NES <span>LOGISTICS INTELLIGENCE</span></div>
-        <p className="auth-eyebrow">RISK AWARE OPERATIONS</p>
+        <a className="auth-brand" href="#home"><span className="brand-mark">N</span><span><strong>Northstar</strong><small>LOGISTICS INTELLIGENCE</small></span></a>
+        <p className="eyebrow auth-eyebrow">RISK AWARE OPERATIONS</p>
         <h1>{mode === "login" ? "Welcome back" : "Create your account"}</h1>
-        <p className="auth-subtitle">{mode === "login" ? "Sign in to continue to your logistics dashboard." : "Register to access your operations dashboard."}</p>
+        <p className="auth-subtitle">{mode === "login" ? "Sign in to continue to your operations dashboard." : "Register to access your operations dashboard."}</p>
         <form className="auth-form" onSubmit={submit}>
           {mode === "register" && <label>Full name<input autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} required maxLength={100} /></label>}
           <label>Email address<input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required maxLength={150} /></label>
@@ -45,10 +38,7 @@ export default function AuthPage({ onAuthenticated }) {
           {error && <p className="auth-error" role="alert">{error}</p>}
           <button className="auth-submit" type="submit" disabled={busy}>{busy ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}</button>
         </form>
-        <p className="auth-switch">
-          {mode === "login" ? "New to NES?" : "Already have an account?"}{" "}
-          <button type="button" onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); }}> {mode === "login" ? "Create an account" : "Sign in"}</button>
-        </p>
+        <p className="auth-switch">{mode === "login" ? "New to Northstar?" : "Already have an account?"}{" "}<button type="button" onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); }}>{mode === "login" ? "Create an account" : "Sign in"}</button></p>
       </section>
       <div className="auth-footer">AI Smart Logistics · Route intelligence for safer operations</div>
     </main>

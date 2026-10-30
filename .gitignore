@@ -1,1 +1,4 @@
 myenv/
+Dataset/
+preprocessing/
+.env
