@@ -302,7 +302,7 @@ const activeMarkers =
                 <strong>
                   {primaryStyle.isSelected
                     ? "✓ Selected Primary Route"
-                    : "Alternative Primary Route"}
+                    : "✓ Selected AI Safer Route"}
                 </strong>
 
                 <br />
@@ -350,7 +350,7 @@ const activeMarkers =
                 <strong>
                   {saferStyle.isSelected
                     ? "✓ Selected AI Safer Route"
-                    : "Alternative Safer Route"}
+                    : "✓ Selected Primary Route"}
                 </strong>
 
                 <br />
