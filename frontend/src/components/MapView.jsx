@@ -31,6 +31,7 @@ function MapView({
   incidents = [],
   selectedRoute = "normal",
   onSelectRoute,
+  selectedIncidentType = "ROAD_BLOCK",
 }) {
   const center = [25.42, 91.79];
 
@@ -73,6 +74,8 @@ function MapView({
     [25.4050, 91.7800],
     [25.4200, 91.7900],
   ];
+
+  
   // uncomment for real coordinates
   // Primary route coordinates.
   // const primaryRoute = convertCoordinates(
@@ -87,8 +90,54 @@ function MapView({
   // Use hardcoded coordinates temporarily for testing.
 // Backend fetching remains unchanged in App.jsx.
 
-const primaryRoute = testPrimaryRoute;
-const saferRoute = testSaferRoute;
+// --------------------------------
+// ROUTES FOR EACH INCIDENT TYPE
+// --------------------------------
+
+// ROAD BLOCK routes: keep your existing coordinates
+const roadblockPrimaryRoute = testPrimaryRoute;
+const roadblockSaferRoute = testSaferRoute;
+
+// LANDSLIDE primary route
+const landslidePrimaryRoute = [
+  [25.3450, 91.7050],
+  [25.3500, 91.6950],
+  [25.3600, 91.6880],
+  [25.3750, 91.6920],
+  [25.3900, 91.7150],
+  [25.4050, 91.7500],
+  [25.4200, 91.7900],
+];
+
+const landslideSaferRoute = [
+  [25.3450, 91.7050],
+  [25.3520, 91.7120],
+  [25.3650, 91.7200],
+  [25.3820, 91.7350],
+  [25.4000, 91.7600],
+  [25.4200, 91.7900],
+];
+
+// Store both routes for each incident type
+const routeSets = {
+  ROAD_BLOCK: {
+    normal: roadblockPrimaryRoute,
+    safer: roadblockSaferRoute,
+  },
+
+  LANDSLIDE: {
+    normal: landslidePrimaryRoute,
+    safer: landslideSaferRoute,
+  },
+};
+
+// Select the route pair based on the incident dropdown
+const activeRoutes =
+  routeSets[selectedIncidentType] ?? routeSets.ROAD_BLOCK;
+
+// Keep these variable names because the rendering code uses them
+const primaryRoute = activeRoutes.normal;
+const saferRoute = activeRoutes.safer;
 
   // Ensure vehicles is always an array.
   const vehicleList = Array.isArray(vehicles)
@@ -112,6 +161,69 @@ const saferRoute = testSaferRoute;
 
   const primaryStyle = getRouteStyle("normal");
   const saferStyle = getRouteStyle("safer");
+
+  // --------------------------------
+// MARKERS FOR EACH INCIDENT ROUTE
+// --------------------------------
+
+// --------------------------------
+// START AND DESTINATION MARKERS
+// --------------------------------
+
+const markerSets = {
+  ROAD_BLOCK: {
+    normal: [
+      {
+        position: roadblockPrimaryRoute[0],
+        label: "Start",
+      },
+      {
+        position: roadblockPrimaryRoute[roadblockPrimaryRoute.length - 1],
+        label: "Destination",
+      },
+    ],
+
+    safer: [
+      {
+        position: roadblockSaferRoute[0],
+        label: "Start",
+      },
+      {
+        position: roadblockSaferRoute[roadblockSaferRoute.length - 1],
+        label: "Destination",
+      },
+    ],
+  },
+
+  LANDSLIDE: {
+    normal: [
+      {
+        position: landslidePrimaryRoute[0],
+        label: "Start",
+      },
+      {
+        position: landslidePrimaryRoute[landslidePrimaryRoute.length - 1],
+        label: "Destination",
+      },
+    ],
+
+    safer: [
+      {
+        position: landslideSaferRoute[0],
+        label: "Start",
+      },
+      {
+        position: landslideSaferRoute[landslideSaferRoute.length - 1],
+        label: "Destination",
+      },
+    ],
+  },
+};
+
+// Markers for the selected incident and route
+const activeMarkers =
+  markerSets[selectedIncidentType]?.[selectedRoute] ??
+  markerSets.ROAD_BLOCK.normal;
 
   return (
     <div className="map-container">
@@ -254,6 +366,46 @@ const saferRoute = testSaferRoute;
             </Polyline>
           </>
         )}
+
+                {/* ROUTE WAYPOINT MARKERS */}
+        {activeMarkers.map((marker, index) => {
+          const isIncident =
+            marker.label === "Road Block" ||
+            marker.label === "Landslide";
+
+          const isStart = marker.label === "Start";
+          const isDestination = marker.label === "Destination";
+
+          const markerColor = isIncident
+            ? "#dc2626"
+            : isStart
+              ? "#16a34a"
+              : isDestination
+                ? "#1677ff"
+                : "#7c3aed";
+
+          return (
+            <CircleMarker
+              key={`waypoint-${selectedIncidentType}-${selectedRoute}-${index}`}
+              center={marker.position}
+              radius={isIncident ? 10 : 7}
+              pathOptions={{
+                color: "#ffffff",
+                weight: 2,
+                fillColor: markerColor,
+                fillOpacity: 1,
+              }}
+            >
+              <Popup>
+                <strong>{marker.label}</strong>
+                <br />
+                Incident: {selectedIncidentType.replace("_", " ")}
+                <br />
+                Route: {selectedRoute === "normal" ? "Primary" : "AI Safer"}
+              </Popup>
+            </CircleMarker>
+          );
+        })}
 
         {/* VEHICLES */}
         {vehicleList.map((vehicle, index) => {
