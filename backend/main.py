@@ -20,13 +20,14 @@ from database import get_db
 from models import Road, Incident, Vehicle, Weather, User, UserSession
 from geoalchemy2 import WKTElement
 
-from data_gen import (
-    get_vehicles,
-    get_weather,
+from risk_model import predict_risk, calculate_segment_risk
+from routing import get_routes, load_roads_dataset
+from live_sources import (
+    get_unified_live_data,
+    get_live_rainfall_openmeteo,
+    get_live_weather_openweather,
+    bbox_for_point,
 )
-
-from risk_model import predict_risk
-from routing import get_routes
 
 
 logger = logging.getLogger(__name__)
@@ -257,36 +258,7 @@ def vehicles(db: Session = Depends(get_db), _user: User = Depends(authenticated_
 
     try:
 
-        # Generate simulated vehicle telemetry
-        vehicle_data = get_vehicles()
-
-        # Insert new vehicles or update existing records
-        for item in vehicle_data["vehicles"]:
-
-            vehicle = db.query(Vehicle).filter_by(
-                vehicle_code=item["id"]
-            ).first()
-
-            if vehicle is None:
-                vehicle = Vehicle(
-                    vehicle_code=item["id"]
-                )
-                db.add(vehicle)
-
-            vehicle.driver = item["driver"]
-            vehicle.cargo = item["cargo"]
-            vehicle.speed = item["speed"]
-            vehicle.status = item["status"]
-
-            # Store geographical location in PostGIS
-            vehicle.geom = WKTElement(
-                f'POINT({item["lon"]} {item["lat"]})',
-                srid=4326
-            )
-
-        db.commit()
-
-        # Retrieve the saved vehicle records from PostgreSQL
+        # Return only persisted fleet telemetry; do not fabricate vehicle locations.
         records = db.query(
             Vehicle.vehicle_code,
             Vehicle.driver,
@@ -312,10 +284,13 @@ def vehicles(db: Session = Depends(get_db), _user: User = Depends(authenticated_
             })
 
         return {
-            "timestamp": vehicle_data["timestamp"],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "vehicles": result
         }
 
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as error:
 
         db.rollback()
@@ -336,17 +311,25 @@ def vehicles(db: Session = Depends(get_db), _user: User = Depends(authenticated_
 def weather(db: Session = Depends(get_db), _user: User = Depends(authenticated_user)):
 
     try:
-
-        # Generate simulated weather data
-        weather_data = get_weather()
+        live_meteo = get_live_rainfall_openmeteo(lat=27.33, lon=88.61)
+        if live_meteo.get("status") != "LIVE_CONNECTED":
+            return {"status":live_meteo.get("status"),"source":"Open-Meteo","rainfall_mm":None,
+                    "visibility_km":None,"temperature_c":None,"humidity":None,
+                    "timestamp":live_meteo.get("timestamp"),"message":"No current weather observation is available."}
+        rainfall = live_meteo.get("rainfall_mm")
+        temp = live_meteo.get("temperature_c")
+        humidity = live_meteo.get("humidity")
+        live_weather = get_live_weather_openweather(lat=27.33, lon=88.61)
+        visibility = live_weather.get("visibility_km") if live_weather.get("status") == "LIVE_CONNECTED" else None
+        condition = live_weather.get("condition") or ("Rain" if (rainfall or 0) > 0 else "No precipitation reported")
 
         # Create a database record
         new_weather = Weather(
-            rainfall=weather_data["rainfall_mm"],
-            visibility=weather_data["visibility_km"],
-            temperature=weather_data["temperature_c"],
-            humidity=weather_data["humidity"],
-            condition=weather_data["condition"],
+            rainfall=rainfall,
+            visibility=visibility,
+            temperature=temp,
+            humidity=humidity,
+            condition=condition,
             timestamp=datetime.now().astimezone()
         )
 
@@ -355,17 +338,22 @@ def weather(db: Session = Depends(get_db), _user: User = Depends(authenticated_u
         db.commit()
         db.refresh(new_weather)
 
-        # Return the saved database record
         return {
+            "status": "LIVE_CONNECTED",
             "rainfall_mm": new_weather.rainfall,
             "visibility_km": new_weather.visibility,
             "temperature_c": new_weather.temperature,
             "humidity": new_weather.humidity,
             "condition": new_weather.condition,
-            "source": "SIMULATED",
+            "source": "Open-Meteo",
+            "visibility_source": live_weather.get("source") if visibility is not None else None,
+            "openweather_status": live_weather.get("status"),
             "timestamp": new_weather.timestamp.isoformat()
         }
 
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as error:
 
         db.rollback()
@@ -478,12 +466,12 @@ def risk(db: Session = Depends(get_db), _user: User = Depends(authenticated_user
         .first()
     )
 
-    # Use database values, or fallback values if no weather data exists
+    # Avoid silently presenting demo weather values as current observations.
     features = {
-        "rainfall": latest_weather.rainfall if latest_weather else 42.5,
-        "visibility": latest_weather.visibility if latest_weather else 3.2,
-        "traffic": 0.65,
-        "slope": 0.72,
+        "rainfall": latest_weather.rainfall if latest_weather and latest_weather.rainfall is not None else 0.0,
+        "visibility": latest_weather.visibility if latest_weather and latest_weather.visibility is not None else 10.0,
+        "traffic": 0.0,
+        "slope": 0.0,
     }
 
     # Predict risk using the existing risk model
@@ -518,7 +506,8 @@ def risk(db: Session = Depends(get_db), _user: User = Depends(authenticated_user
     return {
         "features": features,
         "prediction": prediction,
-        "incident_impact": incident_boost
+        "incident_impact": incident_boost,
+        "output_type": "HEURISTIC_DISRUPTION_INDICATOR_NOT_CALIBRATED_PROBABILITY",
     }
 
 
@@ -527,50 +516,121 @@ def risk(db: Session = Depends(get_db), _user: User = Depends(authenticated_user
 # ============================================================
 
 @app.get("/api/routes")
-def routes(db: Session = Depends(get_db), _user: User = Depends(authenticated_user)):
-
-    route_data = get_routes(db)
-
-    primary_risk = route_data["normal"]["risk_score"]
-
-    # --------------------------------------------------------
-    # If a high-severity incident is reported,
-    # increase the primary route risk.
-    # --------------------------------------------------------
-
-    high_severity_incident = db.query(Incident.id).filter(
-        func.upper(Incident.severity) == "HIGH"
-    ).first()
-
-    if high_severity_incident:
-        primary_risk = min(100, primary_risk + 13)
-
-
-    route_data["normal"]["risk_score"] = primary_risk
-
-
-    # --------------------------------------------------------
-    # Safer route remains available
-    # --------------------------------------------------------
-
-    if primary_risk >= 70:
-
-        route_data["recommendation"] = {
-            "recommended": True,
-            "reason": "High-risk incident detected on the primary corridor.",
-            "route": "safer"
-        }
-
-    else:
-
-        route_data["recommendation"] = {
-            "recommended": False,
-            "reason": "Primary route currently within acceptable risk.",
-            "route": "normal"
-        }
+def routes(
+    alpha: float = 1.0,
+    beta: float = 25.0,
+    start_lon: float = 88.6138,
+    start_lat: float = 27.3389,
+    destination_lon: float = 88.3639,
+    destination_lat: float = 27.1667,
+    db: Session = Depends(get_db),
+    _user: User = Depends(authenticated_user),
+):
+    """
+    Computes routes using the configured distance plus heuristic risk-index cost:
+        C(e) = alpha * D(e) + beta * R(e)
+    Where:
+        - alpha: Weight assigned to distance D(e) in km (default: 1.0)
+        - beta: Weight assigned to normalized heuristic indicator R(e) in [0, 1] (default: 25.0)
+    """
+    if not (-180 <= start_lon <= 180 and -90 <= start_lat <= 90 and
+            -180 <= destination_lon <= 180 and -90 <= destination_lat <= 90):
+        raise HTTPException(status_code=422, detail="Route coordinates are outside valid latitude/longitude ranges.")
+    return get_routes(db, alpha=alpha, beta=beta,
+                      start=[start_lon, start_lat],
+                      destination=[destination_lon, destination_lat])
 
 
-    return route_data
+@app.get("/api/risk/segments")
+def risk_segments(
+    db: Session = Depends(get_db),
+    _user: User = Depends(authenticated_user),
+):
+    """
+    Returns heuristic dynamic disruption indicators for Sikkim OSM road records.
+    These are not trained model probabilities; use /api/susceptibility/predict for
+    the separate terrain susceptibility model output.
+    - segment_id: Unique segment identifier
+    - risk_probability: null; this backend has no calibrated disruption probability model
+    - risk_level: LOW, MEDIUM, or HIGH
+    - risk_factors: Key driving hazard features
+    """
+    roads = load_roads_dataset()
+    latest_weather = db.query(Weather).order_by(Weather.timestamp.desc()).first()
+    rainfall = latest_weather.rainfall if latest_weather and latest_weather.rainfall is not None else 0.0
+    visibility = latest_weather.visibility if latest_weather and latest_weather.visibility is not None else 10.0
+
+    incidents_db = db.query(Incident).filter(Incident.geom.isnot(None)).all()
+    incidents = [{"severity": inc.severity, "type": inc.type} for inc in incidents_db]
+
+    segments = []
+    for road in roads:
+        seg_id = f"OSM-{road.get('id')}"
+        info = calculate_segment_risk(
+            segment_id=seg_id,
+            base_risk=float(road.get("risk") or 0.0),
+            rainfall_mm=rainfall,
+            visibility_km=visibility,
+            slope_deg=0.0,
+        )
+        info["road_name"] = road.get("name")
+        info["route_type"] = road.get("route_type")
+        info["risk_type"] = "HEURISTIC_DISRUPTION_INDICATOR_NOT_CALIBRATED_PROBABILITY"
+        info["disruption_probability"] = None
+        info["risk_indicator"] = info.pop("score", None)
+        info["risk_probability"] = None
+        segments.append(info)
+
+    return {
+        "total_segments": len(segments),
+        "environmental_context": {
+            "rainfall_mm": rainfall,
+            "visibility_km": visibility,
+            "active_incidents": len(incidents),
+        },
+        "segments": segments,
+    }
+
+
+@app.get("/api/live-sources")
+def live_sources(
+    lat: float = 27.5,
+    lon: float = 88.5,
+    radius_degrees: float = 0.65,
+    _user: User = Depends(authenticated_user),
+):
+    """
+    Aggregated live feeds from 8 key satellite, meteorological and hazard sources:
+    Open-Meteo, OpenWeather, NASA EONET, NASA FIRMS, OpenTopography,
+    OpenStreetMap, ISRO MOSDAC, Copernicus GloFAS, and Mapillary.
+    """
+    if not -90 <= lat <= 90 or not -180 <= lon <= 180 or not 0.01 <= radius_degrees <= 2:
+        raise HTTPException(status_code=422, detail="Invalid coordinates or radius_degrees (0.01 to 2).")
+    return get_unified_live_data(lat=lat, lon=lon, bbox=bbox_for_point(lat, lon, radius_degrees))
+
+
+class SusceptibilityInput(BaseModel):
+    features: dict[str, float]
+    segment_id: Optional[str] = Field(default=None, max_length=100)
+
+
+@app.post("/api/susceptibility/predict")
+def susceptibility_predict(
+    payload: SusceptibilityInput,
+    _user: User = Depends(authenticated_user),
+):
+    """Score one point with the trained Sikkim landslide initiation model.
+
+    This estimates terrain susceptibility, not a live road closure/disruption probability.
+    Supply all feature columns from model/models/feature_schema_v3.json.
+    """
+    from risk_model import predict_landslide_susceptibility
+    try:
+        return predict_landslide_susceptibility(payload.features, segment_id=payload.segment_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 # ============================================================
@@ -595,28 +655,27 @@ def routes(db: Session = Depends(get_db), _user: User = Depends(authenticated_us
 #         return json.load(file)
 
 @app.get("/api/network")
-def network(db: Session = Depends(get_db), _user: User = Depends(authenticated_user)):
-
-    roads = db.query(
-        Road.name,
-        Road.risk,
-        Road.route_type,
-        func.ST_AsGeoJSON(Road.geom).label("geometry")
-    ).all()
-
+def network(
+    west: float = 88.20,
+    south: float = 27.00,
+    east: float = 88.90,
+    north: float = 27.65,
+    _user: User = Depends(authenticated_user),
+):
+    if not (-180 <= west < east <= 180 and -90 <= south < north <= 90):
+        raise HTTPException(status_code=422, detail="Invalid network bounding box.")
     features = []
-
-    for road in roads:
-
-        features.append({
-            "type": "Feature",
-            "properties": {
-                "name": road.name,
-                "risk": road.risk,
-                "route_type": road.route_type
-            },
-            "geometry": json.loads(road.geometry)
-        })
+    for road in load_roads_dataset():
+        try:
+            geometry = json.loads(road["geometry"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        coordinates = geometry.get("coordinates", [])
+        if not any(west <= point[0] <= east and south <= point[1] <= north for point in coordinates if len(point) >= 2):
+            continue
+        features.append({"type":"Feature", "properties":{
+            "name":road.get("name"),"risk":road.get("risk"),"route_type":road.get("route_type"),"osm_id":road.get("id")},
+            "geometry":geometry})
 
     return {
         "type": "FeatureCollection",

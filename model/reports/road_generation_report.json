@@ -1,0 +1,18 @@
+{
+  "rows": 6000,
+  "segment_id_status": "REAL_OSM_SEGMENT_IDS",
+  "scenario_categories": {
+    "RIVER_FLOOD_EXPOSURE": 1200,
+    "PROLONGED_RAINFALL": 1200,
+    "HEAVY_RAINFALL": 1200,
+    "NORMAL_CONDITIONS": 1200,
+    "STEEP_TERRAIN_EXPOSURE": 1200
+  },
+  "severity_formula": "clip((0.50*rainfall_rank + 0.35*slope_rank + 0.15*clay_rank)*scenario_multiplier, 0, 1)",
+  "class_thresholds": {
+    "open": "<0.42",
+    "partial": "0.42 to <0.68",
+    "major": ">=0.68"
+  },
+  "warning": "Simulation assumptions only; not calibrated Sikkim road-failure thresholds."
+}

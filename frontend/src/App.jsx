@@ -35,6 +35,8 @@ function App() {
   const [selectedRoute, setSelectedRoute] = useState("normal");
   const [lastUpdated, setLastUpdated] = useState(null);
   const [signingOut, setSigningOut] = useState(false);
+  const [liveSources, setLiveSources] = useState(null);
+  const [liveSourcesError, setLiveSourcesError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -60,8 +62,7 @@ function App() {
     setLoadingDashboard(true);
     setDashboardError("");
     try {
-      // Weather GET persists a sample; fetch it before risk so the assessment
-      // reads the sample created by this refresh.
+      // Persist a fresh Open-Meteo observation before updating the dashboard.
       const weather = await apiRequest("/api/weather");
       const [network, routes, vehicles, risk, incidents] = await Promise.all([
         apiRequest("/api/network"),
@@ -92,6 +93,18 @@ function App() {
   useEffect(() => {
     if (user) loadDashboard();
   }, [user, loadDashboard]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    let active = true;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 35000);
+    apiRequest("/api/live-sources", { signal: controller.signal })
+      .then((data) => { if (active) { setLiveSources(data.sources ?? {}); setLiveSourcesError(""); } })
+      .catch((error) => { if (active) setLiveSourcesError(error.message || "Live-source status is unavailable."); })
+      .finally(() => clearTimeout(timer));
+    return () => { active = false; clearTimeout(timer); controller.abort(); };
+  }, [user]);
 
   async function handleLogout() {
     setSigningOut(true);
@@ -160,15 +173,19 @@ function App() {
             <div className="card-heading map-heading"><div><p className="eyebrow">LIVE MAP</p><h2>Route and fleet map</h2></div>
               <div className="route-switch" role="group" aria-label="Select route">
                 <button className={selectedRoute === "normal" ? "selected primary" : ""} onClick={() => setSelectedRoute("normal")} type="button"><i className="route-key primary-key" />Primary</button>
-                <button className={selectedRoute === "safer" ? "selected safer" : ""} onClick={() => setSelectedRoute("safer")} type="button"><i className="route-key safer-key" />Safer</button>
+                <button className={selectedRoute === "safer" ? "selected safer" : ""} onClick={() => setSelectedRoute("safer")} type="button"><i className="route-key safer-key" />Risk-weighted</button>
               </div>
             </div>
             <div className="map-frame"><MapView network={network} routes={routes} vehicles={vehicles} incidents={incidents} selectedRoute={selectedRoute} onSelectRoute={setSelectedRoute} /></div>
-            <div className="map-footer"><span><i className="legend-line road-legend" />Road network</span><span><i className="legend-line primary-legend" />Primary route</span><span><i className="legend-line safer-legend" />Safer route</span><span><i className="legend-dot incident-legend" />Incident</span></div>
+            <div className="map-footer"><span><i className="legend-line road-legend" />Road network</span><span><i className="legend-line primary-legend" />Primary route</span><span><i className="legend-line safer-legend" />Risk-weighted route</span><span><i className="legend-dot incident-legend" />Incident</span></div>
           </div>
 
           <aside className="side-column">
             <AlertPanel risk={risk} weather={weather} routes={routes} />
+            <div className="panel-card live-source-panel"><div className="card-heading"><div><p className="eyebrow">EXTERNAL FEEDS</p><h2>Live source status</h2></div></div>
+              {liveSourcesError ? <p className="empty-state">{liveSourcesError}</p> : !liveSources ? <p className="empty-state">Checking configured providers…</p> : <div className="source-status-list">{Object.entries(liveSources).map(([key, source]) => <div className="source-status-row" key={key}><span>{({open_meteo:"Open-Meteo",open_weather:"OpenWeather",nasa_eonet:"NASA EONET",nasa_firms:"NASA FIRMS",open_topography:"OpenTopography",open_street_map:"OpenStreetMap",isro_mosdac:"MOSDAC",copernicus_glofas:"GloFAS",mapillary:"Mapillary"})[key] ?? key}</span><span className={`source-status ${String(source.status || "UNKNOWN").toLowerCase()}`}>{source.status || "UNKNOWN"}</span></div>)}</div>}
+              <p className="source-status-note">Only LIVE CONNECTED feeds contain an upstream observation. Other providers need credentials or product setup.</p>
+            </div>
             <div className="panel-card incident-create"><div className="card-heading"><div><p className="eyebrow">FIELD REPORT</p><h2>Report an incident</h2></div><span className="form-icon">＋</span></div>
               <IncidentForm onIncidentAdded={handleIncidentAdded} /></div>
           </aside>

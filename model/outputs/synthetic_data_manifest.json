@@ -1,0 +1,27 @@
+{
+  "generated_at": "2026-10-30T15:32:31.500302+00:00",
+  "seed": 42,
+  "generator_version": "1.0",
+  "source_candidate4": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\final_validation\\candidate_4_full_corrected_model_ready.csv",
+  "source_model": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\random_forest\\models\\final_random_forest_pipeline.joblib",
+  "source_road_file": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\data\\raw\\roads\\sikkim_roads.geojson",
+  "counts": {
+    "susceptibility": 4000,
+    "road_disruption": 6000,
+    "total": 10000
+  },
+  "files": {
+    "susceptibility": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\model\\outputs\\susceptibility_synthetic.csv",
+    "teacher_predictions": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\model\\outputs\\susceptibility_teacher_predictions.csv",
+    "road_disruption": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\model\\outputs\\road_disruption_synthetic.csv",
+    "frontend_preview": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\model\\outputs\\frontend_risk_preview.json",
+    "validation": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\model\\reports\\validation_report.json"
+  },
+  "teacher_prediction_status": "Teacher scores generated using C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\random_forest\\models\\final_random_forest_pipeline.joblib",
+  "frontend_preview_records": 2838,
+  "semantics": {
+    "susceptibility": "Unlabelled synthetic scenarios plus optional teacher scores",
+    "road_disruption": "Simulation-rule labels, not observed events",
+    "risk_probability": "null; risk_score is simulation-only"
+  }
+}

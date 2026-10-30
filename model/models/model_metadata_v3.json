@@ -1,0 +1,48 @@
+{
+  "model_version": "v3.0",
+  "model_name": "Baseline_RandomForest",
+  "saved_path": "C:\\ProgramData\\aTubeCatcher\\peoject\\NES\\NES\\ml\\model\\models\\random_forest_final_v3.joblib",
+  "audit_version": "v4.0_independent_leakage_audit",
+  "created_at": "2026-10-30T22:04:01.876090",
+  "training_environment": {
+    "python_version": "3.13.4",
+    "os_platform": "Windows-11-10.0.26300-SP0",
+    "scikit_learn_version": "1.7.1"
+  },
+  "features": [
+    "elevation",
+    "slope",
+    "aspect_sin",
+    "aspect_cos",
+    "is_flat_aspect",
+    "curvature_total",
+    "plan_curvature",
+    "profile_curvature",
+    "terrain_ruggedness_tri",
+    "topographic_position_tpi",
+    "clay_0_5cm",
+    "clay_5_15cm",
+    "clay_diff_5_15_minus_0_5",
+    "sand_0_5cm",
+    "sand_5_15cm",
+    "sand_diff_5_15_minus_0_5",
+    "soc_0_5cm",
+    "soc_5_15cm",
+    "soc_diff_5_15_minus_0_5",
+    "phh2o_0_5cm",
+    "phh2o_5_15cm",
+    "ph_diff_5_15_minus_0_5",
+    "distance_to_roads_m",
+    "landcover_code"
+  ],
+  "acceptance_criteria_passed": false,
+  "spatial_cv_metrics": {
+    "baseline_mean_roc_auc": 0.7793,
+    "v3_safe_mean_roc_auc": 0.7681,
+    "baseline_mean_pr_auc": 0.731,
+    "v3_safe_mean_pr_auc": 0.7278,
+    "baseline_mean_brier": 0.2078,
+    "v3_safe_mean_brier": 0.219
+  },
+  "disclaimer": "DISCLAIMER: Susceptibility scores reflect baseline terrain, topographic, and edaphic susceptibility to landslide initiation under mapped inventory conditions. They do NOT represent real-time road closure probabilities, traffic disruption risks, or weather-induced hazard states."
+}
