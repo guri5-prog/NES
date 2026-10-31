@@ -5,6 +5,7 @@ import os
 import secrets
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
@@ -12,6 +13,7 @@ from fastapi import Depends, Request, Response
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -39,6 +41,24 @@ from live_sources import (
 
 
 logger = logging.getLogger(__name__)
+
+INCIDENT_PHOTO_DIR = Path(__file__).resolve().parent / "uploads" / "incidents"
+INCIDENT_PHOTO_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+MAX_INCIDENT_PHOTO_BYTES = 8 * 1024 * 1024
+
+
+def incident_photo_for_code(incident_code: Optional[str]):
+    if not incident_code:
+        return None
+    for media_type, extension in INCIDENT_PHOTO_TYPES.items():
+        path = INCIDENT_PHOTO_DIR / f"{incident_code}{extension}"
+        if path.is_file():
+            return path, media_type
+    return None
 
 SESSION_COOKIE = "nes_session"
 SESSION_TTL = timedelta(days=14)
@@ -142,12 +162,21 @@ app = FastAPI(
 # CORS
 # ============================================================
 
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:7357",
+    "http://127.0.0.1:7357",
+]
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+] or DEFAULT_CORS_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -403,6 +432,10 @@ def incidents(db: Session = Depends(get_db), _user: User = Depends(authenticated
                 if incident.timestamp else None
             ),
             "source": incident.source,
+            "photo_url": (
+                f"/api/incidents/{incident.incident_code}/photo"
+                if incident_photo_for_code(incident.incident_code) else None
+            ),
         }
         for incident, lat, lon in records
     ]
@@ -451,7 +484,8 @@ def create_incident(
                 "lat": incident.lat,
                 "lon": incident.lon,
                 "timestamp": new_incident.timestamp.isoformat(),
-                "source": new_incident.source
+                "source": new_incident.source,
+                "photo_url": None,
             }
         }
 
@@ -462,6 +496,105 @@ def create_incident(
             status_code=500,
             detail="Incident could not be saved.",
         ) from error
+
+
+@app.post("/api/incidents/report", status_code=201)
+async def create_incident_report_with_photo(
+    request: Request,
+    type: str,
+    severity: str,
+    description: str,
+    lat: float,
+    lon: float,
+    db: Session = Depends(get_db),
+    _user: User = Depends(authenticated_user),
+):
+    """Create an incident and store an attached image as an authenticated file."""
+    media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    extension = INCIDENT_PHOTO_TYPES.get(media_type)
+    if extension is None:
+        raise HTTPException(status_code=415, detail="Upload a JPEG, PNG, or WebP photo.")
+
+    try:
+        report = IncidentCreate(type=type, severity=severity, description=description, lat=lat, lon=lon)
+    except Exception as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > MAX_INCIDENT_PHOTO_BYTES:
+        raise HTTPException(status_code=413, detail="Photo must be 8 MB or smaller.")
+    content = bytearray()
+    async for chunk in request.stream():
+        content.extend(chunk)
+        if len(content) > MAX_INCIDENT_PHOTO_BYTES:
+            raise HTTPException(status_code=413, detail="Photo must be 8 MB or smaller.")
+    if not content:
+        raise HTTPException(status_code=400, detail="The uploaded photo is empty.")
+    valid_image = (
+        (media_type == "image/jpeg" and content.startswith(b"\xff\xd8\xff"))
+        or (media_type == "image/png" and content.startswith(b"\x89PNG\r\n\x1a\n"))
+        or (media_type == "image/webp" and content[:4] == b"RIFF" and content[8:12] == b"WEBP")
+    )
+    if not valid_image:
+        raise HTTPException(status_code=415, detail="The file contents do not match a JPEG, PNG, or WebP image.")
+
+    incident_code = f"INC-{uuid4().hex.upper()}"
+    photo_path = INCIDENT_PHOTO_DIR / f"{incident_code}{extension}"
+    try:
+        INCIDENT_PHOTO_DIR.mkdir(parents=True, exist_ok=True)
+        photo_path.write_bytes(content)
+        new_incident = Incident(
+            incident_code=incident_code,
+            type=report.type,
+            severity=report.severity,
+            description=report.description,
+            source="USER_REPORTED",
+            timestamp=datetime.now().astimezone(),
+            geom=WKTElement(f"POINT({report.lon} {report.lat})", srid=4326),
+        )
+        db.add(new_incident)
+        db.commit()
+        db.refresh(new_incident)
+        return {
+            "message": "Incident and photo saved successfully.",
+            "incident": {
+                "id": new_incident.incident_code,
+                "type": new_incident.type,
+                "severity": new_incident.severity,
+                "description": new_incident.description,
+                "lat": report.lat,
+                "lon": report.lon,
+                "timestamp": new_incident.timestamp.isoformat(),
+                "source": new_incident.source,
+                "photo_url": f"/api/incidents/{new_incident.incident_code}/photo",
+            },
+        }
+    except SQLAlchemyError as error:
+        db.rollback()
+        photo_path.unlink(missing_ok=True)
+        logger.exception("Failed to persist incident report with photo")
+        raise HTTPException(status_code=500, detail="Incident report could not be saved.") from error
+    except OSError as error:
+        db.rollback()
+        photo_path.unlink(missing_ok=True)
+        logger.exception("Failed to store incident photo")
+        raise HTTPException(status_code=500, detail="Incident photo could not be stored.") from error
+
+
+@app.get("/api/incidents/{incident_code}/photo")
+def get_incident_photo(
+    incident_code: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(authenticated_user),
+):
+    incident = db.query(Incident).filter(Incident.incident_code == incident_code).first()
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found.")
+    photo = incident_photo_for_code(incident.incident_code)
+    if not photo:
+        raise HTTPException(status_code=404, detail="This incident has no attached photo.")
+    path, media_type = photo
+    return FileResponse(path, media_type=media_type, filename=path.name, headers={"Cache-Control": "private, max-age=3600"})
 
 
 @app.get("/api/risk")
