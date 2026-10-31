@@ -80,7 +80,7 @@ def issue_session(user: User, response: Response, db: Session) -> None:
         value=token,
         httponly=True,
         secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
-        samesite="lax",
+        cdsamesite="none" if os.getenv("COOKIE_SECURE", "false").lower() == "true" else "lax",
         max_age=int(SESSION_TTL.total_seconds()),
         path="/",
     )
@@ -142,11 +142,14 @@ app = FastAPI(
 # CORS
 # ============================================================
 
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "https://nes-nu.vercel.app",
+        "https://nes-pgjjyrgvd-singhs-projects-e83c3a29.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
