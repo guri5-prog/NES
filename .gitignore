@@ -2,4 +2,5 @@ myenv/
 Dataset/
 preprocessing/
 backend/.env
+backend/uploads/incidents/
 model/

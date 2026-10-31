@@ -28,6 +28,15 @@ engine = create_engine(
     connect_args={"connect_timeout": 5}
 )
 
+with engine.connect() as connection:
+    print("Connected database:", connection.execute(
+        text("SELECT current_database()")
+    ).scalar())
+
+    print("PostGIS available:", connection.execute(
+        text("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'postgis')")
+    ).scalar())
+
 # Create database sessions
 SessionLocal = sessionmaker(
     autocommit=False,
@@ -48,17 +57,15 @@ def get_db():
     finally:
         db.close()
 
-
+# Test database connection
 # Test database connection
 if __name__ == "__main__":
     try:
         with engine.connect() as connection:
-            result = connection.execute(
-                text("SELECT PostGIS_Full_Version();")
-            )
+            result = connection.execute(text("SELECT 1"))
 
             print("Database connected successfully!")
-            print(result.scalar())
+            print("Test result:", result.scalar())
 
     except Exception as error:
         print("Database connection failed!")
